@@ -175,8 +175,8 @@ export function createProject(input: NewProjectInput): Project {
       input.styleId ?? 'stickman',
       tts,
       tts === 'gemini' ? 'Charon' : '',
-      s.imageModel,
-      s.videoModel,
+      s.defaultVisualProvider === 'flow2api' ? s.flow2apiImageModel : s.imageModel,
+      s.defaultVisualProvider === 'flow2api' ? s.flow2apiVideoModel : s.videoModel,
       JSON.stringify(DEFAULT_EDITOR),
       now,
       now

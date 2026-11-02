@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, ArrowRight, Copy, FolderOpen, MoreHorizontal, Plus, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Copy, FolderOpen, MoreHorizontal, Plus, RefreshCw, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
 import { DURATIONS, LANGUAGES, llmName } from '@shared/models'
 import { getStyle } from '@shared/styles'
 import type { ApiProvider, AppSettings, AspectRatio, KeyStatus, ProjectStatus, ProjectSummary, TtsProvider } from '@shared/types'
@@ -87,6 +87,24 @@ export function Home() {
       return { value: p, label: TTS_NAMES[p], disabled: blocked, note: blocked ? `${ready[p].reason}. Atur di Pengaturan.` : undefined }
     })
   }, [keys])
+
+    const [testingFlow2Api, setTestingFlow2Api] = useState(false)
+  const flow2Status = keys.find((k) => k.provider === 'flow2api')
+  const flow2apiIssue = (appSettings?.defaultVisualProvider ?? 'higgsfield') === 'flow2api' && (!flow2Status?.configured || flow2Status?.lastOk === false)
+
+  const recheckFlow2Api = async (): Promise<void> => {
+    setTestingFlow2Api(true)
+    try {
+      const res = await window.api.settings.testKey('flow2api')
+      const updatedKeys = await window.api.settings.keys()
+      setKeys(updatedKeys)
+      toast(res.ok ? 'success' : 'error', `Flow2API: ${res.message}`)
+    } catch (e) {
+      toast('error', `Gagal cek Flow2API: ${errorText(e)}`)
+    } finally {
+      setTestingFlow2Api(false)
+    }
+  }
 
   const setupIssues = useMemo(() => {
     if (!appSettings || !keys.length) return []
@@ -176,7 +194,24 @@ export function Home() {
               <span className="flex-1">
                 Sebelum mulai, atur dulu {joinList(setupIssues.map((i) => i.what))} di Pengaturan. Tanpa itu,{' '}
                 {joinList([...new Set(setupIssues.map((i) => i.blocks))])} belum bisa dibuat.
+                {flow2apiIssue && flow2Status?.lastMessage && (
+                  <span className="mt-0.5 block font-mono text-xs opacity-90">
+                    Status Flow2API: {flow2Status.lastMessage}
+                  </span>
+                )}
               </span>
+              {flow2apiIssue && (
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  icon={<RefreshCw className={cx('size-3.5', testingFlow2Api && 'animate-spin')} />}
+                  loading={testingFlow2Api}
+                  onClick={() => void recheckFlow2Api()}
+                  title="Cek ulang koneksi server Flow2API"
+                >
+                  Cek Flow2API
+                </Button>
+              )}
               <Button size="sm" variant="secondary" onClick={() => go({ name: 'settings', back: { name: 'home' } })}>
                 Atur sekarang
               </Button>

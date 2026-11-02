@@ -3,7 +3,7 @@ import { extractMediaUrls, normalizeMediaUrl } from '@shared/flow2api-catalog'
 import type { KeyTestResult } from '@shared/types'
 import { getSecret } from '../secrets'
 import { getSettings } from '../settings'
-import { ApiError, readError } from './http'
+import { ApiError, readError, sleep } from './http'
 
 function getBaseUrl(override?: string): string {
   const base = (override ?? getSettings().flow2apiBaseUrl).trim().replace(/\/+$/, '')
@@ -171,19 +171,62 @@ async function streamCompletion(
     reader.releaseLock()
   }
 
-  // Handle any remaining buffered content
-  if (buffer.trim().startsWith('data: ') && buffer.trim() !== 'data: [DONE]') {
-    try {
-      const parsed = JSON.parse(buffer.trim().slice(6).trim())
-      const delta = parsed.choices?.[0]?.delta
-      const content = delta?.content ?? delta?.text ?? ''
-      if (content) accumulatedText += content
-    } catch {
-      // Ignore
+  // Handle any remaining buffered content or non-streaming JSON responses
+  const remaining = buffer.trim()
+  if (remaining) {
+    if (remaining.startsWith('data: ') && remaining !== 'data: [DONE]') {
+      try {
+        const parsed = JSON.parse(remaining.slice(6).trim())
+        const delta = parsed.choices?.[0]?.delta
+        const content = delta?.content ?? delta?.text ?? ''
+        if (content) accumulatedText += content
+      } catch {
+        // Ignore
+      }
+    } else if (!accumulatedText) {
+      try {
+        const parsed = JSON.parse(remaining)
+        const content =
+          parsed.choices?.[0]?.message?.content ??
+          parsed.choices?.[0]?.delta?.content ??
+          parsed.choices?.[0]?.text ??
+          ''
+        if (content) accumulatedText = content
+      } catch {
+        // Ignore
+      }
     }
   }
 
   return accumulatedText
+}
+
+/**
+ * Executes streamCompletion with automatic retry and backoff for transient network and server errors.
+ */
+async function streamCompletionWithRetry(
+  body: Record<string, unknown>,
+  signal?: AbortSignal,
+  onProgress?: (fraction: number, message: string) => void,
+  progressLabel = 'Memproses di Flow2API'
+): Promise<string> {
+  const maxAttempts = 3
+  for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    try {
+      return await streamCompletion(body, signal, onProgress, progressLabel)
+    } catch (e) {
+      if (signal?.aborted) throw e
+      const isRetryable = e instanceof ApiError && e.retryable
+      if (attempt < maxAttempts && isRetryable) {
+        const delayMs = attempt * 3000
+        onProgress?.(0.05, `Koneksi Flow2API terputus atau sibuk. Mencoba ulang (${attempt}/${maxAttempts - 1})...`)
+        await sleep(delayMs, signal)
+        continue
+      }
+      throw e
+    }
+  }
+  throw new Error('Flow2API gagal setelah beberapa kali mencoba')
 }
 
 export interface GenerateImageOptions {
@@ -224,7 +267,7 @@ export async function generateImage(opts: GenerateImageOptions): Promise<{ media
   }
 
   opts.onProgress?.(0.08, 'Mengirim ke Flow2API')
-  const markdown = await streamCompletion(body, opts.signal, opts.onProgress, 'Membuat gambar di Flow2API')
+  const markdown = await streamCompletionWithRetry(body, opts.signal, opts.onProgress, 'Membuat gambar di Flow2API')
 
   const urls = extractMediaUrls(markdown)
   if (!urls.length) {
@@ -267,7 +310,7 @@ export async function generateVideo(opts: GenerateVideoOptions): Promise<{ media
   }
 
   opts.onProgress?.(0.08, 'Mengirim ke Flow2API')
-  const markdown = await streamCompletion(body, opts.signal, opts.onProgress, 'Membuat video di Flow2API (Google Veo)')
+  const markdown = await streamCompletionWithRetry(body, opts.signal, opts.onProgress, 'Membuat video di Flow2API (Google Veo)')
 
   const urls = extractMediaUrls(markdown)
   if (!urls.length) {

@@ -34,7 +34,7 @@ import * as eleven from './services/elevenlabs'
 import * as gemini from './services/gemini'
 import * as f2a from './services/flow2api'
 import * as hf from './services/higgsfield'
-import { resolveFlow2ApiModelId } from '@shared/flow2api-catalog'
+import { getFlow2ApiModel, resolveFlow2ApiModelId } from '@shared/flow2api-catalog'
 import { downloadTo, sleep } from './services/http'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -266,7 +266,7 @@ export function generateClipImage(clipId: string): Job {
         }
       }
 
-      const baseModel = getSettings().flow2apiImageModel
+      const baseModel = (project.imageModel && !project.imageModel.includes('/') ? project.imageModel : null) ?? getSettings().flow2apiImageModel
       const modelId = resolveFlow2ApiModelId(baseModel, project.aspectRatio)
       const prompt = clipPrompt(project, fresh, chars, chars.map((c) => c.name), 4000)
 
@@ -332,7 +332,7 @@ export function generateCharacterSheet(characterId: string): Job {
     return runJob(job, 'flow2api', async (ctx) => {
       const project = getProject(c.projectId)
       const prompt = sheetPrompt(project, getCharacter(characterId))
-      const baseModel = getSettings().flow2apiImageModel
+      const baseModel = (project.imageModel && !project.imageModel.includes('/') ? project.imageModel : null) ?? getSettings().flow2apiImageModel
       const modelId = resolveFlow2ApiModelId(baseModel, '16:9')
 
       ctx.progress(0.04, 'Menyiapkan prompt lembar karakter Flow2API')
@@ -400,7 +400,7 @@ export function generateClipVideo(clipId: string): Job {
       const imgBuffer = readFileSync(imgAbs)
 
       const durationSec = Math.max(4, Math.round(fresh.durationMs / 1000))
-      const baseModel = getSettings().flow2apiVideoModel
+      const baseModel = (project.videoModel && !project.videoModel.includes('/') ? project.videoModel : null) ?? getSettings().flow2apiVideoModel
       const modelId = resolveFlow2ApiModelId(baseModel, project.aspectRatio, durationSec)
 
       const prompt =
@@ -522,8 +522,10 @@ export function generateClipTts(clipId: string): Job {
 export function generateMissingImages(projectId: string): Job[] {
   const jobs: Job[] = []
   const project = getProject(projectId)
-  const model = getImageModel(project.imageModel)
-  if (maxRefs(model) > 0) {
+  const canRef = isFlow2Api()
+    ? getFlow2ApiModel(project.imageModel || getSettings().flow2apiImageModel, 'image').supportsRef
+    : maxRefs(getImageModel(project.imageModel)) > 0
+  if (canRef) {
     const needed = new Set(clipsOf(projectId).flatMap((c) => c.characterIds))
     for (const c of charactersOf(projectId)) {
       if (needed.has(c.id) && !c.sheetAssetId) jobs.push(generateCharacterSheet(c.id))

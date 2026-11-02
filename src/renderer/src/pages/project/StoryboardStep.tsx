@@ -18,6 +18,7 @@ import {
   Trash2,
   Volume2
 } from 'lucide-react'
+import { FLOW2API_IMAGE_MODELS, FLOW2API_VIDEO_MODELS, getFlow2ApiModel } from '@shared/flow2api-catalog'
 import { effectiveResolution, fitDuration, getImageModel, getVideoModel } from '@shared/higgsfield'
 import { CAMERA_PRESETS, MOTION_STRENGTHS, cameraAt, cameraCss } from '@shared/motion'
 import { needsVisual } from '@shared/script'
@@ -100,6 +101,21 @@ function MotionPreview({ image, clip }: { image: Asset; clip: Clip }) {
       </button>
     </>
   )
+}
+
+function videoModelSummary(modelId: string | null | undefined, resolution: string | null | undefined, durationMs: number): string {
+  const f2a = FLOW2API_VIDEO_MODELS.find((m) => m.id === modelId)
+  if (f2a) {
+    const sec = Math.max(4, Math.round(durationMs / 1000))
+    const fit = f2a.durations.length
+      ? f2a.durations.reduce((prev, curr) => (Math.abs(curr - sec) < Math.abs(prev - sec) ? curr : prev), 6)
+      : 6
+    return `${f2a.name} · video ${fit} detik`
+  }
+  const hf = getVideoModel(modelId)
+  const fit = fitDuration(hf, durationMs / 1000)
+  const effRes = effectiveResolution(hf, resolution)
+  return `${hf.name} · video ${fit} detik${effRes ? ` · ${effRes}` : ''}`
 }
 
 function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: number }) {
@@ -397,9 +413,7 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
                 <div className="flex items-center gap-1.5 text-xs text-ink-2">
                   <Film className="size-3.5 shrink-0" />
                   <span className="truncate">
-                    {getVideoModel(project.videoModel).name} · video {fitDuration(getVideoModel(project.videoModel), clip.durationMs / 1000)} detik
-                    {effectiveResolution(getVideoModel(project.videoModel), project.videoResolution) &&
-                      ` · ${effectiveResolution(getVideoModel(project.videoModel), project.videoResolution)}`}
+                    {videoModelSummary(project.videoModel, project.videoResolution, clip.durationMs)}
                   </span>
                   <button
                     type="button"
@@ -463,12 +477,16 @@ export function StoryboardStep() {
     lastNarration.current = key
   }, [jobs])
 
+  const isFlow2Image = FLOW2API_IMAGE_MODELS.some((m) => m.id === project?.imageModel)
+  const isFlow2Video = FLOW2API_VIDEO_MODELS.some((m) => m.id === project?.videoModel)
+
   useEffect(() => {
-    if (project)
+    if (project && !isFlow2Image)
       void window.api.generate
         .estimate('image', getImageModel(project.imageModel).id, project.aspectRatio)
         .then((e) => setCredits(e?.credits ?? null))
-  }, [project?.id, project?.imageModel, project?.aspectRatio])
+    else setCredits(null)
+  }, [project?.id, project?.imageModel, project?.aspectRatio, isFlow2Image])
 
   const stats = useMemo(() => {
     const imgs = clips.filter((c) => c.imageAssetId).length
@@ -481,10 +499,10 @@ export function StoryboardStep() {
 
   // Video length follows each clip's voice, so the cost is estimated per video length and summed.
   const videoLengths = useMemo(() => {
-    if (!project) return ''
+    if (!project || isFlow2Video) return ''
     const model = getVideoModel(project.videoModel)
     return stats.needVideo.map((c) => fitDuration(model, c.durationMs / 1000) ?? 5).join(',')
-  }, [stats.needVideo, project?.videoModel])
+  }, [stats.needVideo, project?.videoModel, isFlow2Video])
   useEffect(() => {
     if (!project || !videoLengths) return setVideoCredits(null)
     const lengths = videoLengths.split(',').map(Number)
@@ -525,11 +543,14 @@ export function StoryboardStep() {
     !narration.running
   const makeVideos = async (): Promise<void> => {
     const n = stats.needVideo.length
+    const videoModelName = isFlow2Video
+      ? getFlow2ApiModel(project!.videoModel, 'video').name
+      : getVideoModel(project!.videoModel).name
     const ok = await confirmDialog({
       title: `Jadikan ${n} klip video AI?`,
       body:
-        `Setiap gambar klip dianimasikan dengan ${getVideoModel(project!.videoModel).name}, panjangnya mengikuti suara narasi klip itu.` +
-        (videoCredits != null ? ` Perkiraan biaya ${Math.round(videoCredits * 10) / 10} kredit Higgsfield.` : '') +
+        `Setiap gambar klip dianimasikan dengan ${videoModelName}, panjangnya mengikuti suara narasi klip itu.` +
+        (!isFlow2Video && videoCredits != null ? ` Perkiraan biaya ${Math.round(videoCredits * 10) / 10} kredit Higgsfield.` : '') +
         ' Klip yang sudah punya video tidak dibuat ulang.',
       confirm: `Buat ${n} video`
     })

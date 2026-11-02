@@ -135,21 +135,43 @@ export function extractMediaUrls(text: string): string[] {
   const urls: string[] = []
   if (!text) return urls
 
+  const add = (u: string | undefined): void => {
+    if (!u) return
+    const clean = u.trim().replace(/^["']|["']$/g, '')
+    if (clean && !urls.includes(clean)) {
+      urls.push(clean)
+    }
+  }
+
   // 1. Match Markdown image/link syntax: ![...](url) or [...](url)
   const mdRegex = /!?\[.*?\]\((https?:\/\/[^\s\)\'\"]+|\/[^\s\)\'\"]+)\)/gi
   let match: RegExpExecArray | null
   while ((match = mdRegex.exec(text)) !== null) {
-    if (match[1] && !urls.includes(match[1])) {
-      urls.push(match[1])
-    }
+    add(match[1])
   }
 
-  // 2. Match direct URLs ending in media extensions
-  const directRegex = /(https?:\/\/[^\s\)\'\"]+\.(?:png|jpe?g|webp|mp4|mov)(?:\?[^\s\)\'\"]*)?)/gi
+  // 2. Match HTML image/video/source tags: <img src="..."> or <video src="...">
+  const htmlRegex = /<(?:img|video|source)[^>]+src=["']([^"']+)["']/gi
+  while ((match = htmlRegex.exec(text)) !== null) {
+    add(match[1])
+  }
+
+  // 3. Match JSON url fields: "url": "..." or "video_url": "..."
+  const jsonRegex = /"(?:url|media_url|image_url|video_url|src)":\s*"([^"]+)"/gi
+  while ((match = jsonRegex.exec(text)) !== null) {
+    add(match[1])
+  }
+
+  // 4. Match direct URLs ending in media extensions
+  const directRegex = /(https?:\/\/[^\s\)\'\"<>]+(?:\.png|\.jpe?g|\.webp|\.mp4|\.mov)(?:\?[^\s\)\'\"<>]*)?)/gi
   while ((match = directRegex.exec(text)) !== null) {
-    if (match[1] && !urls.includes(match[1])) {
-      urls.push(match[1])
-    }
+    add(match[1])
+  }
+
+  // 5. Match direct Google Cloud Storage or Flow2API media paths
+  const cloudRegex = /(https?:\/\/[^\s\)\'\"<>]+(?:storage\.googleapis\.com|\/media\/|\/outputs?\/)[^\s\)\'\"<>]+)/gi
+  while ((match = cloudRegex.exec(text)) !== null) {
+    add(match[1])
   }
 
   return urls
