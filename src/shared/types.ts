@@ -1,8 +1,9 @@
 export type ProjectStatus = 'draft' | 'script' | 'storyboard' | 'editing' | 'exported'
 export type AspectRatio = '16:9' | '9:16'
+export type VisualProvider = 'higgsfield' | 'flow2api'
 export type TtsProvider = 'gemini' | 'elevenlabs'
 export type LlmProvider = 'gemini' | 'openrouter' | 'groq' | 'custom'
-export type ApiProvider = 'higgsfield' | 'gemini' | 'elevenlabs' | 'openrouter' | 'groq' | 'custom'
+export type ApiProvider = 'higgsfield' | 'gemini' | 'elevenlabs' | 'openrouter' | 'groq' | 'custom' | 'flow2api'
 /** Where a live model list comes from: an LLM provider, or a TTS catalog. */
 export type ModelSource = LlmProvider | 'gemini-tts' | 'elevenlabs'
 export type MotionType = 'camera' | 'video'
@@ -292,6 +293,14 @@ export interface AppSettings {
   videoModel: string
   /** Time captions against the real voice with Whisper after narration is made (when the model is present). */
   whisperAuto: boolean
+  /** Penyedia gambar dan video bawaan: Higgsfield atau Flow2API. */
+  defaultVisualProvider: VisualProvider
+  /** Base URL server Flow2API, termasuk /v1. */
+  flow2apiBaseUrl: string
+  /** Model dasar gambar di Flow2API (suffix aspect otomatis). */
+  flow2apiImageModel: string
+  /** Model dasar video di Flow2API (suffix aspect+durasi otomatis). */
+  flow2apiVideoModel: string
 }
 
 /** What one Higgsfield request would cost, from the API's estimate endpoint. */

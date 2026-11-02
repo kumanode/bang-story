@@ -51,6 +51,7 @@ import { dropCache, getSettings, setSettings } from './settings'
 import { probeDurationMs, probeSize } from './services/audio'
 import * as eleven from './services/elevenlabs'
 import * as gemini from './services/gemini'
+import * as f2a from './services/flow2api'
 import * as hf from './services/higgsfield'
 import * as llm from './services/llm'
 import { generateScript, generateVisuals, generateMusicPrompt } from './story'
@@ -71,6 +72,7 @@ function handle(channel: string, fn: Handler): void {
 
 async function testProvider(provider: ApiProvider, key?: string): Promise<KeyTestResult> {
   if (provider === 'higgsfield') return hf.testCredentials(key)
+  if (provider === 'flow2api') return f2a.testCredentials(key)
   if (provider === 'elevenlabs') return eleven.testKey(key)
   return llm.testLlm(provider, key)
 }
@@ -205,11 +207,21 @@ export function registerIpc(): void {
     recordCheck('custom', result.ok, result.message)
     return result
   })
+  handle('settings:setFlow2Api', async (baseUrl: string, key: string) => {
+    const url = baseUrl.trim().replace(/\/+$/, '')
+    if (!/^https?:\/\/[^\s]+$/i.test(url)) throw new Error('Alamat endpoint harus diawali http:// atau https://')
+    setSettings({ flow2apiBaseUrl: url })
+    if (key.trim()) setSecret('flow2api', key.trim())
+    const result = await f2a.testCredentials(key.trim() || undefined, url)
+    recordCheck('flow2api', result.ok, result.message)
+    return result
+  })
   handle('settings:clearKey', (provider: ApiProvider) => {
     clearSecret(provider)
     dropCache(`models:${provider}`)
     if (provider === 'higgsfield') forgetEstimates()
     if (provider === 'custom') setSettings({ customBaseUrl: '' })
+    if (provider === 'flow2api') setSettings({ flow2apiBaseUrl: 'http://localhost:8000/v1' })
   })
   handle('models:list', (source: ModelSource, refresh?: boolean) => llm.listModels(source, !!refresh))
   handle('settings:testKey', async (provider: ApiProvider) => {

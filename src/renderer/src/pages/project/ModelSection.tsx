@@ -1,7 +1,8 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import { Film, Image as ImageIcon, Move, Users } from 'lucide-react'
+import { DEFAULT_FLOW2API_IMAGE_MODEL, DEFAULT_FLOW2API_VIDEO_MODEL, flow2apiModelOptions } from '@shared/flow2api-catalog'
 import { effectiveResolution, fitDuration, getImageModel, getVideoModel, hfModelOptions, maxRefs, resolutionOptions } from '@shared/higgsfield'
-import type { CreditEstimate, ModelOption, Project } from '@shared/types'
+import type { AppSettings, CreditEstimate, ModelOption, Project } from '@shared/types'
 import { ModelLogo } from '../../components/ModelLogo'
 import { ModelPicker } from '../../components/ModelPicker'
 import { Segmented, Spinner } from '../../components/ui'
@@ -77,9 +78,11 @@ export function ModelSection({
   const resolution = effectiveResolution(video, project.videoResolution)
   const videoCost = useEstimate('video', video.id, project.aspectRatio, perClip, resolution)
   const [hasKey, setHasKey] = useState<boolean | null>(null)
+  const [appSettings, setAppSettings] = useState<AppSettings | null>(null)
 
   useEffect(() => {
     void window.api.settings.keys().then((keys) => setHasKey(!!keys.find((k) => k.provider === 'higgsfield')?.configured))
+    void window.api.settings.get().then(setAppSettings)
   }, [])
 
   const imageCosts = useEstimates('image', IMAGE_IDS, project.aspectRatio, undefined, hasKey === true)
@@ -89,6 +92,71 @@ export function ModelSection({
     () => withCosts(VIDEO_OPTIONS, videoCosts, (id) => `${fitDuration(getVideoModel(id), perClip)} dtk`, hasKey === true),
     [videoCosts, perClip, hasKey]
   )
+
+  const isFlow2Api = appSettings?.defaultVisualProvider === 'flow2api'
+  const f2aImageModels = useMemo(() => flow2apiModelOptions('image'), [])
+  const f2aVideoModels = useMemo(() => flow2apiModelOptions('video'), [])
+
+  if (isFlow2Api) {
+    const activeImageId = appSettings?.flow2apiImageModel || DEFAULT_FLOW2API_IMAGE_MODEL
+    const activeVideoId = appSettings?.flow2apiVideoModel || DEFAULT_FLOW2API_VIDEO_MODEL
+
+    return (
+      <div className="flex flex-col gap-2">
+        <div className="flex items-baseline gap-2">
+          <span className="text-sm font-semibold">Model AI</span>
+          <span className="text-[13px] text-muted">
+            {f2aImageModels.length} model gambar dan {f2aVideoModels.length} model video dari Flow2API (Google Veo &amp; Imagen)
+          </span>
+        </div>
+        <div className="grid grid-cols-2 gap-3">
+          <Card icon={<ImageIcon className="size-4" />} title="Gambar klip">
+            <ModelPicker
+              value={activeImageId}
+              models={f2aImageModels}
+              renderIcon={(m) => <ModelLogo family={m.family} />}
+              detail="description"
+              tagFilters={['Rekomendasi', 'Cepat', 'Nano Banana', 'Fotorealistik']}
+              menuClassName="w-[430px]"
+              onChange={async (id) => {
+                setAppSettings(await window.api.settings.set({ flow2apiImageModel: id }))
+                onChange({ imageModel: id })
+              }}
+            />
+            <p className="text-[12.5px] leading-snug text-ink-2">
+              Memakai akun Google melalui server Flow2API · <b className="font-semibold text-ink">Tanpa biaya kredit</b>
+            </p>
+            <p className="flex items-start gap-1.5 text-[12.5px] leading-snug text-muted">
+              <Users className="mt-px size-3.5 shrink-0" />
+              Mendukung hingga 3 lembar karakter referensi untuk konsistensi tokoh.
+            </p>
+          </Card>
+          <Card icon={<Film className="size-4" />} title="Video AI">
+            <ModelPicker
+              value={activeVideoId}
+              models={f2aVideoModels}
+              renderIcon={(m) => <ModelLogo family={m.family} />}
+              detail="description"
+              tagFilters={['Rekomendasi', 'Cepat', 'Gambar ke Video', 'Teks ke Video']}
+              align="right"
+              menuClassName="w-[430px]"
+              onChange={async (id) => {
+                setAppSettings(await window.api.settings.set({ flow2apiVideoModel: id }))
+                onChange({ videoModel: id })
+              }}
+            />
+            <p className="text-[12.5px] leading-snug text-ink-2">
+              Animasi klip dibuat dengan Google Veo · <b className="font-semibold text-ink">Tanpa biaya kredit</b>
+            </p>
+            <p className="flex items-start gap-1.5 text-[12.5px] leading-snug text-muted">
+              <Move className="mt-px size-3.5 shrink-0" />
+              Rasio (landscape/portrait) dan durasi klip otomatis disesuaikan ke varian model Veo.
+            </p>
+          </Card>
+        </div>
+      </div>
+    )
+  }
 
   return (
     <div className="flex flex-col gap-2">

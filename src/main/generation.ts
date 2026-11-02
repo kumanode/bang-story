@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { estimateWordTimings } from '@shared/captions'
 import { stripVoiceTags } from '@shared/speech'
@@ -32,7 +32,9 @@ import { dropCache, getSettings, readCache, writeCache } from './settings'
 import { probeDurationMs, probeSize } from './services/audio'
 import * as eleven from './services/elevenlabs'
 import * as gemini from './services/gemini'
+import * as f2a from './services/flow2api'
 import * as hf from './services/higgsfield'
+import { resolveFlow2ApiModelId } from '@shared/flow2api-catalog'
 import { downloadTo, sleep } from './services/http'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -235,12 +237,75 @@ function updateJobPayload(jobId: string, payload: HfPayload): void {
   getDb().prepare('UPDATE jobs SET payload_json = ? WHERE id = ?').run(JSON.stringify(payload), jobId)
 }
 
+function isFlow2Api(): boolean {
+  return getSettings().defaultVisualProvider === 'flow2api'
+}
+
 // ---------- public entry points ----------
 
 export function generateClipImage(clipId: string): Job {
   const existing = activeJobFor({ clipId }, 'image')
   if (existing) return existing
   const clip = getClip(clipId)
+  if (isFlow2Api()) {
+    const job = insertJob({ projectId: clip.projectId, clipId, kind: 'image', provider: 'flow2api' })
+    emit.job(job)
+    return runJob(job, 'flow2api', async (ctx) => {
+      const fresh = getClip(clipId)
+      const project = getProject(fresh.projectId)
+      const chars = charactersOf(project.id).filter((c) => fresh.characterIds.includes(c.id))
+      await waitForSheets(chars.map((c) => c.id), ctx.signal)
+
+      const refBuffers: Buffer[] = []
+      for (const c of chars) {
+        const freshChar = getCharacter(c.id)
+        const sheet = getAsset(freshChar.sheetAssetId)
+        if (sheet && refBuffers.length < 3) {
+          const abs = assetAbsPath(project.id, sheet.localPath)
+          if (existsSync(abs)) refBuffers.push(readFileSync(abs))
+        }
+      }
+
+      const baseModel = getSettings().flow2apiImageModel
+      const modelId = resolveFlow2ApiModelId(baseModel, project.aspectRatio)
+      const prompt = clipPrompt(project, fresh, chars, chars.map((c) => c.name), 4000)
+
+      ctx.progress(0.04, 'Menyiapkan prompt Flow2API')
+      const { mediaUrl } = await f2a.generateImage({
+        prompt,
+        model: modelId,
+        referenceImages: refBuffers,
+        signal: ctx.signal,
+        onProgress: (p, msg) => ctx.progress(p, msg)
+      })
+
+      ctx.progress(0.93, 'Mengunduh hasil')
+      const { bytes, contentType } = await downloadTo(mediaUrl, ctx.signal)
+      const rel = saveFile(project.id, 'images', extFromType(contentType, mediaUrl, '.png'), bytes)
+      const abs = assetAbsPath(project.id, rel)
+      const size = await probeSize(abs)
+      const asset = insertAsset({
+        projectId: project.id,
+        clipId: fresh.id,
+        kind: 'image',
+        provider: 'flow2api',
+        model: modelId,
+        prompt,
+        remoteUrl: mediaUrl,
+        localPath: rel,
+        width: size?.width ?? null,
+        height: size?.height ?? null
+      })
+      emit.asset(asset)
+      patchClip(clipId, { imageAssetId: asset.id })
+      emit.clip({ clipId, patch: { imageAssetId: asset.id } })
+      const first = clipsOf(project.id)[0]
+      if (!project.coverAssetId || first?.id === clipId) touchProject(project.id, { coverAssetId: asset.id })
+      touchProject(project.id)
+      return asset.id
+    })
+  }
+
   const job = insertJob({ projectId: clip.projectId, clipId, kind: 'image', provider: 'higgsfield' })
   return startHiggsfield(job, async (ctx) => {
     const fresh = getClip(clipId)
@@ -261,6 +326,48 @@ export function generateCharacterSheet(characterId: string): Job {
   const existing = activeJobFor({ characterId }, 'sheet')
   if (existing) return existing
   const c = getCharacter(characterId)
+  if (isFlow2Api()) {
+    const job = insertJob({ projectId: c.projectId, characterId, kind: 'sheet', provider: 'flow2api' })
+    emit.job(job)
+    return runJob(job, 'flow2api', async (ctx) => {
+      const project = getProject(c.projectId)
+      const prompt = sheetPrompt(project, getCharacter(characterId))
+      const baseModel = getSettings().flow2apiImageModel
+      const modelId = resolveFlow2ApiModelId(baseModel, '16:9')
+
+      ctx.progress(0.04, 'Menyiapkan prompt lembar karakter Flow2API')
+      const { mediaUrl } = await f2a.generateImage({
+        prompt,
+        model: modelId,
+        signal: ctx.signal,
+        onProgress: (p, msg) => ctx.progress(p, msg)
+      })
+
+      ctx.progress(0.93, 'Mengunduh lembar karakter')
+      const { bytes, contentType } = await downloadTo(mediaUrl, ctx.signal)
+      const rel = saveFile(project.id, 'images', extFromType(contentType, mediaUrl, '.png'), bytes)
+      const abs = assetAbsPath(project.id, rel)
+      const size = await probeSize(abs)
+      const asset = insertAsset({
+        projectId: project.id,
+        characterId,
+        kind: 'image',
+        provider: 'flow2api',
+        model: modelId,
+        prompt,
+        remoteUrl: mediaUrl,
+        localPath: rel,
+        width: size?.width ?? null,
+        height: size?.height ?? null
+      })
+      setCharacterSheet(characterId, asset.id)
+      emit.character({ characterId, patch: { sheetAssetId: asset.id } })
+      emit.asset(asset)
+      touchProject(c.projectId)
+      return asset.id
+    })
+  }
+
   const job = insertJob({ projectId: c.projectId, characterId, kind: 'sheet', provider: 'higgsfield' })
   return startHiggsfield(job, async () => {
     const project = getProject(c.projectId)
@@ -279,6 +386,64 @@ export function generateClipVideo(clipId: string): Job {
   if (existing) return existing
   const clip = getClip(clipId)
   if (!clip.imageAssetId) throw new Error('Buat gambar klip ini dulu sebelum membuat video AI.')
+  if (isFlow2Api()) {
+    const job = insertJob({ projectId: clip.projectId, clipId, kind: 'video', provider: 'flow2api' })
+    emit.job(job)
+    return runJob(job, 'flow2api', async (ctx) => {
+      const fresh = getClip(clipId)
+      const image = getAsset(fresh.imageAssetId)
+      if (!image) throw new Error('Gambar klip tidak ditemukan')
+      const project = getProject(fresh.projectId)
+
+      const imgAbs = assetAbsPath(project.id, image.localPath)
+      if (!existsSync(imgAbs)) throw new Error('File gambar klip tidak ditemukan di disk')
+      const imgBuffer = readFileSync(imgAbs)
+
+      const durationSec = Math.max(4, Math.round(fresh.durationMs / 1000))
+      const baseModel = getSettings().flow2apiVideoModel
+      const modelId = resolveFlow2ApiModelId(baseModel, project.aspectRatio, durationSec)
+
+      const prompt =
+        fresh.videoPrompt.trim() ||
+        `${splitAvoid(fresh.visualPrompt).scene.replace(/\.$/, '')}. Subtle natural motion of the characters and environment, the camera slowly pushes in. Keep the art style of the first frame.`
+
+      ctx.progress(0.04, 'Menyiapkan video Flow2API (Veo)')
+      const { mediaUrl } = await f2a.generateVideo({
+        prompt,
+        model: modelId,
+        initialImage: imgBuffer,
+        signal: ctx.signal,
+        onProgress: (p, msg) => ctx.progress(p, msg)
+      })
+
+      ctx.progress(0.93, 'Mengunduh video hasil')
+      const { bytes, contentType } = await downloadTo(mediaUrl, ctx.signal)
+      const rel = saveFile(project.id, 'videos', extFromType(contentType, mediaUrl, '.mp4'), bytes)
+      const abs = assetAbsPath(project.id, rel)
+      const size = await probeSize(abs)
+      const durationMs = await probeDurationMs(abs).catch(() => null)
+      const asset = insertAsset({
+        projectId: project.id,
+        clipId: fresh.id,
+        kind: 'video',
+        provider: 'flow2api',
+        model: modelId,
+        prompt,
+        remoteUrl: mediaUrl,
+        localPath: rel,
+        durationMs,
+        width: size?.width ?? null,
+        height: size?.height ?? null
+      })
+      emit.asset(asset)
+      const patch = { videoAssetId: asset.id, motionType: 'video' as const, mediaInMs: 0 }
+      patchClip(clipId, patch)
+      emit.clip({ clipId, patch })
+      touchProject(project.id)
+      return asset.id
+    })
+  }
+
   const job = insertJob({ projectId: clip.projectId, clipId, kind: 'video', provider: 'higgsfield' })
   return startHiggsfield(job, async (ctx) => {
     const fresh = getClip(clipId)
@@ -425,6 +590,7 @@ export async function estimateCredits(
   seconds = 5,
   resolution?: string | null
 ): Promise<CreditEstimate | null> {
+  if (isFlow2Api()) return null
   const model = kind === 'image' ? getImageModel(modelId) : getVideoModel(modelId)
   const body =
     kind === 'image'

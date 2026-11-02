@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import { Bot, Play, Sparkles, Square } from 'lucide-react'
+import { getFlow2ApiModel } from '@shared/flow2api-catalog'
 import { getImageModel } from '@shared/higgsfield'
 import { DURATIONS, LANGUAGES, clipCountFor, llmName } from '@shared/models'
 import { getStyle } from '@shared/styles'
-import type { KeyStatus, LlmProvider, TtsProvider, VoiceOption } from '@shared/types'
+import type { AppSettings, KeyStatus, LlmProvider, TtsProvider, VoiceOption } from '@shared/types'
 import { Select } from '../../components/Select'
 import { StylePicker } from '../../components/StylePicker'
 import { Button, Chip, Field, Segmented, confirmDialog, cx } from '../../components/ui'
@@ -106,11 +107,15 @@ export function IdeaStep() {
   const { project, clips, updateProject, flush, load } = useProject()
   const { toast, go } = useApp()
   const [busy, setBusy] = useState(false)
+  const [settings, setSettings] = useState<AppSettings | null>(null)
   const [writer, setWriter] = useState<{ provider: LlmProvider; model: string } | null>(null)
   const [keys, setKeys] = useState<KeyStatus[]>([])
 
   useEffect(() => {
-    void window.api.settings.get().then((s) => setWriter({ provider: s.llmProvider, model: s.llmModels[s.llmProvider] }))
+    void window.api.settings.get().then((s) => {
+      setSettings(s)
+      setWriter({ provider: s.llmProvider, model: s.llmModels[s.llmProvider] })
+    })
     void window.api.settings.keys().then(setKeys)
   }, [])
 
@@ -132,7 +137,10 @@ export function IdeaStep() {
 
   const clipCount = clipCountFor(project.durationSec)
   const perClip = Math.round(project.durationSec / clipCount)
-  const model = getImageModel(project.imageModel)
+  const modelName =
+    settings?.defaultVisualProvider === 'flow2api'
+      ? getFlow2ApiModel(settings?.flow2apiImageModel, 'image').name
+      : getImageModel(project.imageModel).name
 
   const compose = async (): Promise<void> => {
     if (!project.synopsis.trim()) {
@@ -304,7 +312,7 @@ export function IdeaStep() {
       <footer className="absolute inset-x-0 bottom-0 flex h-[84px] items-center gap-4 border-t border-line bg-surface px-14">
         <div className="flex flex-col gap-0.5">
           <span className="text-[15px] font-semibold">
-            ± {clipCount} adegan · gambar {model.name}
+            ± {clipCount} adegan · gambar {modelName}
           </span>
           <span className="flex items-center gap-1.5 text-[13px] text-muted">
             <Bot className="size-3.5" />

@@ -16,9 +16,10 @@ import {
   SlidersHorizontal,
   Trash2
 } from 'lucide-react'
+import { FLOW2API_IMAGE_MODELS, FLOW2API_VIDEO_MODELS } from '@shared/flow2api-catalog'
 import { HF_IMAGE_MODELS, HF_VIDEO_MODELS } from '@shared/higgsfield'
 import { LANGUAGES, LLM_PROVIDERS } from '@shared/models'
-import type { ApiProvider, AppSettings, KeyStatus, KeyTestResult, LlmProvider, TtsProvider } from '@shared/types'
+import type { ApiProvider, AppSettings, KeyStatus, KeyTestResult, LlmProvider, TtsProvider, VisualProvider } from '@shared/types'
 import { Logo } from '../components/Logo'
 import { ModelPicker } from '../components/ModelPicker'
 import { ProviderLogo, type ProviderLogoId } from '../components/ProviderLogo'
@@ -155,7 +156,7 @@ function KeyForm({
 }) {
   const { toast } = useApp()
   const configured = !!status?.configured
-  const isCustom = provider === 'custom'
+  const isCustom = provider === 'custom' || provider === 'flow2api'
   const preview = status?.preview ?? null
   const [editing, setEditing] = useState(!preview)
   const [key, setKey] = useState('')
@@ -186,7 +187,12 @@ function KeyForm({
   const save = async (): Promise<void> => {
     setBusy('save')
     try {
-      const r = isCustom ? await window.api.settings.setCustom(url, key) : await window.api.settings.setKey(provider, key)
+      const r =
+        provider === 'custom'
+          ? await window.api.settings.setCustom(url, key)
+          : provider === 'flow2api'
+            ? await window.api.settings.setFlow2Api(url, key)
+            : await window.api.settings.setKey(provider, key)
       toast(r.ok ? 'success' : 'error', `${name}: ${r.message}`)
       setKey('')
       setEditing(false)
@@ -228,7 +234,7 @@ function KeyForm({
     })
     if (!ok) return
     await window.api.settings.clearKey(provider)
-    setUrl('')
+    setUrl(provider === 'flow2api' ? 'http://localhost:8000/v1' : '')
     onChanged()
   }
 
@@ -241,7 +247,7 @@ function KeyForm({
               value={url}
               onChange={(e) => setUrl(e.target.value)}
               onKeyDown={onEnter}
-              placeholder="http://localhost:11434/v1"
+              placeholder={provider === 'flow2api' ? 'http://localhost:8000/v1' : 'http://localhost:11434/v1'}
               spellCheck={false}
               className={cx(inputCls, 'h-11 font-mono text-sm')}
             />
@@ -506,43 +512,148 @@ function TtsSection({ settings, statusOf, onChanged, onSettings }: { settings: A
   )
 }
 
-function HiggsfieldSection({ status, onChanged }: { status?: KeyStatus; onChanged: () => void }) {
+function VisualSection({
+  settings,
+  statusOf,
+  onChanged,
+  onSettings
+}: {
+  settings: AppSettings
+  statusOf: (p: ApiProvider) => KeyStatus | undefined
+  onChanged: () => void
+  onSettings: (s: AppSettings) => void
+}) {
+  const provider = settings.defaultVisualProvider
+  const status = statusOf(provider)
+  const configured = !!status?.configured
+
+  const options: ProviderOption<VisualProvider>[] = [
+    {
+      id: 'higgsfield',
+      name: 'Higgsfield',
+      note: 'Soul, Kling, Seedance, dan model lain dari akun Higgsfield kamu',
+      logo: 'higgsfield',
+      status: statusOf('higgsfield')
+    },
+    {
+      id: 'flow2api',
+      name: 'Flow2API (Google Veo & Imagen)',
+      note: 'Model Google Flow via server Flow2API (lokal Docker atau remote)',
+      logo: 'flow2api',
+      status: statusOf('flow2api')
+    }
+  ]
+
   return (
     <>
-      <SectionTitle icon={<ImageIcon className="size-5" />} title="Gambar dan video" sub="Higgsfield membuat gambar klip, lembar karakter, dan video AI." />
-      <Card>
-        <div className="flex items-center gap-3">
-          <ProviderLogo id="higgsfield" />
-          <div className="flex flex-1 flex-col">
-            <span className="text-base font-bold">Higgsfield</span>
-            <span className="text-[13px] text-ink-2">GPT Image 2.5, Kling, Seedance, dan model lain dari akun Higgsfield kamu</span>
-          </div>
-          <StatusBadge status={status} />
-        </div>
-        <KeyForm
-          provider="higgsfield"
-          name="Higgsfield"
-          status={status}
-          placeholder="Tempel hasil tombol Copy API key"
-          hint={
-            <>
-              Di console Higgsfield, buka API Keys lalu klik <strong className="text-ink">Copy API key</strong> dan tempel di sini. Formatnya{' '}
-              <code className="rounded bg-sand px-1 font-mono text-xs">KEY_ID:KEY_SECRET</code>. Kalau kamu memegang Key ID dan Secret terpisah, gabungkan
-              dengan titik dua.
-            </>
-          }
-          help="Kunci dicek dengan permintaan estimasi biaya, tanpa memakai kredit."
-          link="https://higgsfield.ai/s/higgsfield-api-yt-bangtutorial-lPMrHK"
-          linkLabel="Buka console Higgsfield"
-          onChanged={onChanged}
-        />
-        <p className="flex items-start gap-2.5 border-t border-dashed border-line pt-4 text-[13px] leading-relaxed text-ink-2">
-          <Film className="mt-0.5 size-4 shrink-0" />
-          <span>
-            Semua {HF_IMAGE_MODELS.length} model gambar dan {HF_VIDEO_MODELS.length} model video Higgsfield bisa dipakai. Modelnya dipilih per proyek
-            di langkah <strong className="text-ink">Ide cerita</strong>, bagian Model AI.
-          </span>
-        </p>
+      <SectionTitle
+        icon={<ImageIcon className="size-5" />}
+        title="Gambar dan video"
+        sub="Pilih penyedia utama untuk membuat gambar klip, lembar karakter, dan video AI."
+      />
+      <ProviderSelect
+        value={provider}
+        options={options}
+        onChange={async (id) => {
+          onSettings(await window.api.settings.set({ defaultVisualProvider: id }))
+        }}
+      />
+      <Card key={provider}>
+        {provider === 'higgsfield' ? (
+          <>
+            <div className="flex items-center gap-3">
+              <ProviderLogo id="higgsfield" />
+              <div className="flex flex-1 flex-col">
+                <span className="text-base font-bold">Higgsfield</span>
+                <span className="text-[13px] text-ink-2">GPT Image 2.5, Kling, Seedance, dan model lain dari akun Higgsfield kamu</span>
+              </div>
+              <StatusBadge status={status} />
+            </div>
+            <KeyForm
+              provider="higgsfield"
+              name="Higgsfield"
+              status={status}
+              placeholder="Tempel hasil tombol Copy API key"
+              hint={
+                <>
+                  Di console Higgsfield, buka API Keys lalu klik <strong className="text-ink">Copy API key</strong> dan tempel di sini. Formatnya{' '}
+                  <code className="rounded bg-sand px-1 font-mono text-xs">KEY_ID:KEY_SECRET</code>. Kalau kamu memegang Key ID dan Secret terpisah, gabungkan
+                  dengan titik dua.
+                </>
+              }
+              help="Kunci dicek dengan permintaan estimasi biaya, tanpa memakai kredit."
+              link="https://higgsfield.ai/s/higgsfield-api-yt-bangtutorial-lPMrHK"
+              linkLabel="Buka console Higgsfield"
+              onChanged={onChanged}
+            />
+            <p className="flex items-start gap-2.5 border-t border-dashed border-line pt-4 text-[13px] leading-relaxed text-ink-2">
+              <Film className="mt-0.5 size-4 shrink-0" />
+              <span>
+                Semua {HF_IMAGE_MODELS.length} model gambar dan {HF_VIDEO_MODELS.length} model video Higgsfield bisa dipakai. Modelnya dipilih per proyek
+                di langkah <strong className="text-ink">Ide cerita</strong>, bagian Model AI.
+              </span>
+            </p>
+          </>
+        ) : (
+          <>
+            <div className="flex items-center gap-3">
+              <ProviderLogo id="flow2api" />
+              <div className="flex flex-1 flex-col">
+                <span className="text-base font-bold">Flow2API</span>
+                <span className="text-[13px] text-ink-2">Google Veo (Video) dan Gemini Flash Image / Imagen (Gambar) melalui server Flow2API</span>
+              </div>
+              <StatusBadge status={status} />
+            </div>
+            <KeyForm
+              provider="flow2api"
+              name="Flow2API"
+              status={status}
+              customUrl={settings.flow2apiBaseUrl}
+              placeholder="Kosongkan jika server lokal tanpa password"
+              hint={
+                <>
+                  Pastikan container Flow2API sudah berjalan (misal via Docker di <code className="rounded bg-sand px-1 font-mono text-xs">localhost:8000</code>).
+                  Kunci API / Bearer token diisi jika server Flow2API diproteksi token.
+                </>
+              }
+              help="Endpoint dicek dengan memanggil daftar model aktif."
+              link="http://localhost:8000"
+              linkLabel="Buka dashboard Flow2API"
+              onChanged={onChanged}
+              onSaved={async (r) => {
+                if (r.ok) onSettings(await window.api.settings.get())
+              }}
+            />
+            {configured && status?.lastOk !== false && (
+              <div className="flex flex-col gap-4 border-t border-dashed border-line pt-4">
+                <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                  <Field label="Model bawaan gambar">
+                    <Select
+                      label="Model bawaan gambar"
+                      value={settings.flow2apiImageModel}
+                      onChange={async (v) => onSettings(await window.api.settings.set({ flow2apiImageModel: v }))}
+                      options={FLOW2API_IMAGE_MODELS.map((m) => ({ value: m.id, label: m.name }))}
+                    />
+                  </Field>
+                  <Field label="Model bawaan video">
+                    <Select
+                      label="Model bawaan video"
+                      value={settings.flow2apiVideoModel}
+                      onChange={async (v) => onSettings(await window.api.settings.set({ flow2apiVideoModel: v }))}
+                      options={FLOW2API_VIDEO_MODELS.map((m) => ({ value: m.id, label: m.name }))}
+                    />
+                  </Field>
+                </div>
+                <p className="flex items-start gap-2 text-[13px] text-ink-2">
+                  <Film className="mt-0.5 size-4 shrink-0" />
+                  <span>
+                    Rasio aspek (landscape/portrait) dan durasi klip akan dipetakan secara otomatis ke varian model Flow2API saat pembuatan media.
+                  </span>
+                </p>
+              </div>
+            )}
+          </>
+        )}
       </Card>
     </>
   )
@@ -617,7 +728,7 @@ export function Settings() {
                 </div>
                 <LlmSection settings={settings} statusOf={statusOf} onChanged={reload} onSettings={setSettings} />
                 <TtsSection settings={settings} statusOf={statusOf} onChanged={reload} onSettings={setSettings} />
-                <HiggsfieldSection status={statusOf('higgsfield')} onChanged={reload} />
+                <VisualSection settings={settings} statusOf={statusOf} onChanged={reload} onSettings={setSettings} />
                 <WhisperSection settings={settings} onSettings={setSettings} />
               </>
             )}

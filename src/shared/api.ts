@@ -79,6 +79,8 @@ export interface StudioApi {
     setKey(provider: ApiProvider, key: string): Promise<KeyTestResult>
     /** Saves an OpenAI-compatible endpoint; the key is optional for local servers. */
     setCustom(baseUrl: string, key: string): Promise<KeyTestResult>
+    /** Saves a Flow2API endpoint; the key is optional for local servers. */
+    setFlow2Api(baseUrl: string, key: string): Promise<KeyTestResult>
     clearKey(provider: ApiProvider): Promise<void>
     /** The full stored key, only for the "show key" button. */
     revealKey(provider: ApiProvider): Promise<string | null>

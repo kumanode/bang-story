@@ -13,7 +13,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   elevenModel: 'eleven_multilingual_v2',
   imageModel: DEFAULT_IMAGE_MODEL,
   videoModel: DEFAULT_VIDEO_MODEL,
-  whisperAuto: true
+  whisperAuto: true,
+  defaultVisualProvider: 'higgsfield',
+  flow2apiBaseUrl: 'http://localhost:8000/v1',
+  flow2apiImageModel: 'gemini-3.1-flash-image',
+  flow2apiVideoModel: 'veo-3.1-fast-i2v'
 }
 
 export function getSettings(): AppSettings {
@@ -30,6 +34,9 @@ export function getSettings(): AppSettings {
   // Models dropped from the Higgsfield catalog fall back to the defaults.
   out.imageModel = getImageModel(out.imageModel).id
   out.videoModel = getVideoModel(out.videoModel).id
+  if (out.defaultVisualProvider !== 'higgsfield' && out.defaultVisualProvider !== 'flow2api') {
+    out.defaultVisualProvider = 'higgsfield'
+  }
   return out
 }
 
