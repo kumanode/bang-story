@@ -52,6 +52,15 @@ function parseHttpError(status: number, detail: string): ApiError {
   if (/safety|moderation|block|policy/i.test(detail)) {
     return new ApiError('Prompt ditolak oleh kebijakan keamanan Google Flow. Ubah prompt lalu coba lagi.', status)
   }
+  if (/没有可用的Token|no available token|token.*(expired|cooldown|disabled|locked|tidak ada)/i.test(detail)) {
+    return new ApiError(
+      'Tidak ada token/akun Google yang aktif di Flow2API (semua token nonaktif, cooldown, atau kedaluwarsa). Buka dashboard Flow2API untuk menambahkan atau memperbarui akun Google kamu.',
+      status
+    )
+  }
+  if (/额度|quota|insufficient/i.test(detail)) {
+    return new ApiError('Kuota akun di Flow2API telah habis. Tambahkan akun Google baru di dashboard Flow2API.', status)
+  }
   if (status >= 500) {
     return new ApiError(`Server Flow2API mengalami kesalahan (${status}): ${detail}`, status, true)
   }
