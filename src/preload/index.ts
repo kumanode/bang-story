@@ -27,7 +27,8 @@ const api: StudioApi = {
     script: call('story:script'),
     visuals: call('story:visuals'),
     musicPrompt: call('story:musicPrompt'),
-    youtubeMetadata: call('story:youtubeMetadata')
+    youtubeMetadata: call('story:youtubeMetadata'),
+    thumbnailConcept: call('story:thumbnailConcept')
   },
   generate: {
     thumbnail: call('generate:thumbnail'),
@@ -79,7 +80,8 @@ const api: StudioApi = {
     nvencAvailable: call('export:nvencAvailable'),
     defaultFolder: call('export:defaultFolder'),
     pickFolder: call('export:pickFolder'),
-    reveal: call('export:reveal')
+    reveal: call('export:reveal'),
+    saveThumbnail: call('export:saveThumbnail')
   },
   app: {
     openExternal: call('app:openExternal'),

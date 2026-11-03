@@ -21,7 +21,8 @@ export const STYLE_CATEGORIES: { id: StyleCategory | 'all'; label: string }[] = 
   { id: 'realistis', label: 'Realistis' }
 ]
 
-const NO_TEXT = 'No text, no letters, no captions, no watermark, no logo.'
+/** Shared by every style; thumbnails with a text hook remove it again. */
+export const NO_TEXT = 'No text, no letters, no captions, no watermark, no logo.'
 
 export const VISUAL_STYLES: VisualStyle[] = [
   {

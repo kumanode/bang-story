@@ -12,6 +12,7 @@ import {
   Plus,
   Redo2,
   Scissors,
+  Sparkles,
   Trash2,
   Type,
   Undo2,
@@ -23,8 +24,8 @@ import {
 } from 'lucide-react'
 import type { CaptionChunk } from '@shared/captions'
 import { overlayEnd } from '@shared/overlays'
-import { BUILTIN_SFX } from '@shared/sfx'
-import { MIN_ITEM_MS, musicSpan, voiceSpan } from '@shared/timeline'
+import { BUILTIN_SFX, planAutoSfx } from '@shared/sfx'
+import { clipCaptionWords, MIN_ITEM_MS, musicSpan, voiceSpan } from '@shared/timeline'
 import type { Asset, EditorSettings, Overlay, SfxItem, WordTiming } from '@shared/types'
 import { cx } from '../../../components/ui'
 import { errorText, timecode } from '../../../lib/format'
@@ -224,6 +225,61 @@ export function Timeline({
       }
       updateEditor({ sfx: [...(project.editor.sfx ?? []), sfxItem] })
       toast('info', `SFX "${sfxItem.name}" ditambahkan pada ${timecode(currentT)}`)
+    } catch (e) {
+      toast('error', errorText(e))
+    }
+  }
+
+  const addAutoSfx = async (): Promise<void> => {
+    if (!project || lockedTracks.sfx) return
+    setShowSfxMenu(false)
+    const cues = planAutoSfx(
+      items.map((it) => ({
+        startSec: it.start,
+        endSec: it.end,
+        text: [it.clip.story, it.clip.narration, it.clip.visualPrompt].join(' '),
+        words: it.audio
+          ? clipCaptionWords(it.clip, it.audio.meta.words ?? [], it.audio.durationMs ?? UNKNOWN_AUDIO_MS).words.map((w) => ({
+              text: w.text,
+              start: it.start + w.start
+            }))
+          : [],
+        transition: it.clip.transition
+      })),
+      total
+    )
+    if (!cues.length) {
+      toast('info', 'Tidak ada adegan yang cocok untuk efek suara otomatis. Coba tambahkan SFX manual.')
+      return
+    }
+    try {
+      // One asset per effect, reused across cues and later runs, instead of a file copy per cue.
+      const byId = new Map<string, Asset>()
+      for (const id of new Set(cues.map((c) => c.sfxId))) {
+        const def = BUILTIN_SFX.find((s) => s.id === id)!
+        let asset = Object.values(useProject.getState().assets).find((a) => a.kind === 'sfx' && a.provider === 'builtin' && a.prompt === def.name)
+        if (!asset) {
+          asset = await window.api.assets.addBuiltinSfx(project.id, id)
+          useProject.getState().addAsset(asset)
+        }
+        byId.set(id, asset)
+      }
+      const placed: SfxItem[] = cues.map((c) => {
+        const asset = byId.get(c.sfxId)!
+        return {
+          id: crypto.randomUUID(),
+          assetId: asset.id,
+          name: asset.prompt ?? 'SFX',
+          startMs: c.startMs,
+          durationMs: Math.min(asset.durationMs ?? 1000, Math.max(100, Math.round(total * 1000) - c.startMs)),
+          inMs: 0,
+          volumeDb: c.volumeDb,
+          auto: true
+        }
+      })
+      const manual = (useProject.getState().project?.editor.sfx ?? []).filter((s) => !s.auto)
+      updateEditor({ sfx: [...manual, ...placed] })
+      toast('info', `${placed.length} efek suara otomatis dipasang. Jalankan lagi untuk menyusun ulang; SFX manual tidak diubah.`)
     } catch (e) {
       toast('error', errorText(e))
     }
@@ -920,6 +976,16 @@ export function Timeline({
                     className="absolute left-0 top-6 z-50 w-56 rounded-lg border border-line bg-paper p-1.5 shadow-xl"
                     onClick={(e) => e.stopPropagation()}
                   >
+                    <button
+                      type="button"
+                      onClick={addAutoSfx}
+                      title="Pasang efek suara sesuai kata di narasi dan transisi"
+                      className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-xs font-semibold text-accent-dark hover:bg-accent/10"
+                    >
+                      <Sparkles className="size-3.5" />
+                      <span>SFX Otomatis</span>
+                    </button>
+                    <div className="my-1 border-t border-line" />
                     <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted">
                       Pustaka SFX Bawaan
                     </div>

@@ -32,6 +32,11 @@ Aturan edit (`renderer/src/pages/project/editor/Timeline.tsx`):
   bersama), tepi kanan memotong akhir (`voiceOutMs`), seret badan untuk memindahkan (`voiceStartMs`).
 - **Caption**: tepi atau badan menggeser waktu kata potongan itu; disimpan lewat `assets:setWords` saat dilepas.
 - **Musik, SFX, dan overlay**: tepi untuk awal/akhir, badan untuk memindahkan. SFX dapat di-snap ke playhead dan batas klip; drop file WAV/MP3/OGG/M4A pada track SFX untuk mengimpornya.
+- **SFX Otomatis** (menu + di track SFX): `planAutoSfx` di `shared/sfx.ts` mencari kata kunci (petir, ledak, ketuk,
+  lonceng, glitch, melesat, dst.) di kata hasil Whisper tiap klip dan menaruh SFX bawaan tepat di kata itu; klip tanpa
+  suara memakai teks naskah. Maksimal satu efek per klip, riser 2 detik sebelum petir/dentuman, whoosh di transisi
+  bergerak (wipe, slide, zoom), jarak minimal 3 detik antar-efek, volume di bawah narasi. Item ditandai `auto: true`;
+  menjalankan ulang hanya mengganti item otomatis dan memakai ulang aset SFX yang sudah ada di proyek.
 - Tombol kunci di label track mencegah pemilihan, geser, dan trim item di track tersebut. Kunci hanya berlaku di editor dan reset saat proyek berganti.
 - Tepi menempel (snap) ke playhead dan sambungan klip dalam radius 8 px. Skala timeline dibekukan selama menyeret.
 - **Potong** (`S`/Ctrl+B): `clips:split` di `editing.ts` membelah klip di playhead. Titik potong digeser ke jeda
@@ -106,6 +111,24 @@ Gerak Ken Burns kustom tersimpan di `editor.clipFraming` dengan kunci ID klip; d
   di titik tengah katanya, supaya ukuran teksnya tidak menggeser baris. Spasi dan jarak ekstra untuk pop dihitung
   dari konstanta bersama. Kapsul memakai rounded rectangle ASS, dengan padding dan radius yang sama dengan
   pratinjau; pop masuk berlangsung 80 ms.
+
+## Kemasan YouTube dan thumbnail (`ExportDialog.tsx`, tab Kemasan YouTube)
+
+Alurnya dua langkah, sengaja berurutan:
+
+1. `story:youtubeMetadata` membuat 3 judul, deskripsi, dan hashtag. Judul pertama langsung terpilih; pengguna bisa
+   memilih judul lain atau menulis sendiri.
+2. `story:thumbnailConcept` menulis konsep (prompt gambar, komposisi, teks hook 2–4 kata) **untuk judul terpilih**,
+   lalu `generate:thumbnail` membuat 3 variasi dengan penyedia gambar yang aktif (Flow2API atau Higgsfield).
+   Thumbnail yang dirancang sesudah judul menjual janji yang sama dengan judulnya.
+
+`thumbnailPrompt` di `generation.ts` memasukkan judul, deskripsi 1–2 tokoh utama (yang paling sering muncul) beserta
+lembar karakternya sebagai referensi, dan gaya visual proyek. Kalau "Tulis teks hook di gambar" aktif, kalimat
+`NO_TEXT` dari gaya visual dibuang dulu, karena larangan teks itu bertabrakan dengan instruksi menggambar teks.
+Yang digambar hanya teks hook, bukan judul lengkap, karena model gambar sering salah eja kalimat panjang.
+
+"Simpan JPG" (`export:saveThumbnail`) mengubah hasil menjadi JPG 1280×720 lewat FFmpeg, supaya di bawah batas
+2 MB thumbnail YouTube. Konsep dan judul terpilih disimpan per sesi di `ytCache`, tidak di database.
 
 ## Menambah fitur di editor: daftar periksa
 

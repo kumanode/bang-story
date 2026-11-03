@@ -4,8 +4,8 @@ import { dirname } from 'node:path'
 import { estimateWordTimings } from '@shared/captions'
 import { stripVoiceTags } from '@shared/speech'
 import { getImageModel, getVideoModel, imageBody, maxRefs, promptLimit, videoBody, type HfModel } from '@shared/higgsfield'
-import { getStyle } from '@shared/styles'
-import type { AspectRatio, Asset, Character, Clip, CreditEstimate, Job, Project, WordTiming } from '@shared/types'
+import { getStyle, NO_TEXT } from '@shared/styles'
+import type { AspectRatio, Asset, Character, Clip, CreditEstimate, Job, Project, ThumbnailRequest, WordTiming } from '@shared/types'
 import { getDb } from './db'
 import { emit } from './events'
 import { runJob, type TaskCtx } from './jobs'
@@ -34,7 +34,7 @@ import * as eleven from './services/elevenlabs'
 import * as gemini from './services/gemini'
 import * as f2a from './services/flow2api'
 import * as hf from './services/higgsfield'
-import { getFlow2ApiModel, resolveFlow2ApiModelId } from '@shared/flow2api-catalog'
+import { getFlow2ApiModel, resolveFlow2ApiModelId, resolveFlow2ApiVideo } from '@shared/flow2api-catalog'
 import { downloadTo, sleep } from './services/http'
 
 const DAY = 24 * 60 * 60 * 1000
@@ -324,16 +324,66 @@ export function generateClipImage(clipId: string): Job {
   })
 }
 
-export function generateThumbnail(projectId: string, prompt: string, variation: number): Job {
+/** The characters in the most scenes: thumbnails show the lead, not the whole cast. */
+function leadCharacters(projectId: string, max: number): Character[] {
+  const count = new Map<string, number>()
+  for (const clip of clipsOf(projectId)) for (const id of clip.characterIds) count.set(id, (count.get(id) ?? 0) + 1)
+  return charactersOf(projectId)
+    .filter((c) => count.has(c.id))
+    .sort((a, b) => (count.get(b.id) ?? 0) - (count.get(a.id) ?? 0))
+    .slice(0, max)
+}
+
+function thumbnailPrompt(project: Project, req: ThumbnailRequest, chars: Character[], refNames: string[]): string {
+  const drawText = req.withText && !!req.textHook.trim()
+  // Every style forbids text for scene frames; left in, it fights the hook instruction and models drop the text.
+  const stylePrompt = drawText ? getStyle(project.styleId).prompt.replace(NO_TEXT, '').trim() : getStyle(project.styleId).prompt
+  const parts = [
+    `YouTube thumbnail, 16:9, for a video titled "${req.title.trim()}".`,
+    `Scene:\n${req.prompt.trim()}`
+  ]
+  if (chars.length) parts.push(`Characters, keep their look exactly:\n${chars.map(characterLine).join('\n')}`)
+  if (refNames.length)
+    parts.push(
+      `Reference images are character sheets, in this order: ${refNames.join(', ')}. Use them for identity, face and colors only; do not copy the sheet layout or background.`
+    )
+  // Image models misspell long text, so only the short hook is drawn; the title itself stays in YouTube's title field.
+  parts.push(
+    drawText
+      ? `Draw the text "${req.textHook.trim()}" exactly as written, huge bold sans-serif capital letters with a thick dark outline, filling about a third of the frame on the empty side, fully inside the frame. No other text, logos or watermarks.`
+      : 'No text, letters, logos or watermarks anywhere. Leave clean empty space on one side for a title added later.'
+  )
+  parts.push(
+    'Thumbnail rules: one clear focal subject close to the camera with a strong readable facial expression, bold contrast, saturated colors, uncluttered background, readable at small size.'
+  )
+  parts.push(`Art style: ${stylePrompt}`)
+  parts.push(`Variation ${req.variation}: use a distinct camera angle, pose and expression from the other variations.`)
+  return parts.join('\n\n')
+}
+
+export function generateThumbnail(projectId: string, req: ThumbnailRequest): Job {
   const project = getProject(projectId)
-  const variedPrompt = `${prompt.trim()}\nVariation ${variation}: create a distinct composition and facial expression while preserving the story concept.`
+  const variation = req.variation
+  const chars = leadCharacters(projectId, 2)
   if (isFlow2Api()) {
     const job = insertJob({ projectId, kind: 'image', provider: 'flow2api', payload: { target: 'thumbnail', variation } })
     emit.job(job)
     return runJob(job, 'flow2api', async (ctx) => {
+      await waitForSheets(chars.map((c) => c.id), ctx.signal)
+      const refBuffers: Buffer[] = []
+      const refNames: string[] = []
+      for (const c of chars) {
+        const sheet = getAsset(getCharacter(c.id).sheetAssetId)
+        const abs = sheet && assetAbsPath(projectId, sheet.localPath)
+        if (abs && existsSync(abs)) {
+          refBuffers.push(readFileSync(abs))
+          refNames.push(c.name)
+        }
+      }
+      const variedPrompt = thumbnailPrompt(project, req, chars, refNames)
       const baseModel = (project.imageModel && !project.imageModel.includes('/') ? project.imageModel : null) ?? getSettings().flow2apiImageModel
       const modelId = resolveFlow2ApiModelId(baseModel, '16:9')
-      const { mediaUrl } = await f2a.generateImage({ prompt: variedPrompt, model: modelId, referenceImages: [], signal: ctx.signal, onProgress: (progress, message) => ctx.progress(progress, message) })
+      const { mediaUrl } = await f2a.generateImage({ prompt: variedPrompt, model: modelId, referenceImages: refBuffers, signal: ctx.signal, onProgress: (progress, message) => ctx.progress(progress, message) })
       const { bytes, contentType } = await downloadTo(mediaUrl, ctx.signal)
       const rel = saveFile(projectId, 'images', extFromType(contentType, mediaUrl, '.png'), bytes)
       const size = await probeSize(assetAbsPath(projectId, rel))
@@ -343,11 +393,13 @@ export function generateThumbnail(projectId: string, prompt: string, variation: 
     })
   }
   const job = insertJob({ projectId, kind: 'image', provider: 'higgsfield', payload: { target: 'thumbnail', variation } })
-  return startHiggsfield(job, async () => {
+  return startHiggsfield(job, async (ctx) => {
     const model = getImageModel(project.imageModel)
+    const refs = await referenceUrls(model, chars, ctx.signal)
+    const variedPrompt = thumbnailPrompt(project, req, chars, refs.names)
     return {
       endpoint: model.id,
-      body: imageBody(model, variedPrompt, '16:9', []),
+      body: imageBody(model, variedPrompt, '16:9', refs.urls),
       payload: { target: 'thumbnail', model: model.id, prompt: variedPrompt }
     }
   })
@@ -432,7 +484,8 @@ export function generateClipVideo(clipId: string): Job {
 
       const durationSec = Math.max(4, Math.round(fresh.durationMs / 1000))
       const baseModel = (project.videoModel && !project.videoModel.includes('/') ? project.videoModel : null) ?? getSettings().flow2apiVideoModel
-      const modelId = resolveFlow2ApiModelId(baseModel, project.aspectRatio, durationSec)
+      const video = resolveFlow2ApiVideo(baseModel, project.aspectRatio, durationSec)
+      const modelId = video.model
 
       const prompt =
         fresh.videoPrompt.trim() ||
@@ -442,7 +495,9 @@ export function generateClipVideo(clipId: string): Job {
       const { mediaUrl } = await f2a.generateVideo({
         prompt,
         model: modelId,
-        initialImage: imgBuffer,
+        aspectRatio: video.aspectRatio,
+        durationSec: video.durationSec,
+        initialImage: video.withImage ? imgBuffer : undefined,
         signal: ctx.signal,
         onProgress: (p, msg) => ctx.progress(p, msg)
       })

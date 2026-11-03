@@ -52,6 +52,12 @@ function parseHttpError(status: number, detail: string): ApiError {
   if (/safety|moderation|block|policy/i.test(detail)) {
     return new ApiError('Prompt ditolak oleh kebijakan keamanan Google Flow. Ubah prompt lalu coba lagi.', status)
   }
+  if (/不支持的模型|unsupported model|unknown model/i.test(detail)) {
+    return new ApiError(
+      `Model tidak dikenali oleh Flow2API (${detail}). Pilih model lain di Pengaturan atau perbarui Flow2API.`,
+      status
+    )
+  }
   if (/没有可用的Token|no available token|token.*(expired|cooldown|disabled|locked|tidak ada)/i.test(detail)) {
     return new ApiError(
       'Tidak ada token/akun Google yang aktif di Flow2API (semua token nonaktif, cooldown, atau kedaluwarsa). Buka dashboard Flow2API untuk menambahkan atau memperbarui akun Google kamu.',
@@ -140,7 +146,30 @@ async function streamCompletion(
   const decoder = new TextDecoder('utf-8')
   let accumulatedText = ''
   let buffer = ''
+  // Flow2API reports progress and failure text in reasoning_content; kept so an empty result can say why.
+  let lastStatus = ''
   const started = Date.now()
+
+  // Flow2API answers 200 and then streams `data: {"error": {...}}`, so failures only show up here.
+  const readChunk = (jsonStr: string): void => {
+    let parsed: {
+      error?: { message?: string; status_code?: number }
+      choices?: Array<{ delta?: { content?: string; text?: string; reasoning_content?: string } }>
+    }
+    try {
+      parsed = JSON.parse(jsonStr)
+    } catch {
+      return
+    }
+    if (parsed.error) {
+      throw parseHttpError(parsed.error.status_code ?? 500, parsed.error.message || 'Generation failed')
+    }
+    const delta = parsed.choices?.[0]?.delta
+    const content = delta?.content ?? delta?.text ?? ''
+    if (content) accumulatedText += content
+    const status = delta?.reasoning_content?.trim()
+    if (status) lastStatus = status
+  }
 
   try {
     for (;;) {
@@ -163,17 +192,7 @@ async function streamCompletion(
         if (!trimmed || trimmed.startsWith(':')) continue
         if (trimmed === 'data: [DONE]') continue
 
-        if (trimmed.startsWith('data: ')) {
-          const jsonStr = trimmed.slice(6).trim()
-          try {
-            const parsed = JSON.parse(jsonStr)
-            const delta = parsed.choices?.[0]?.delta
-            const content = delta?.content ?? delta?.text ?? ''
-            if (content) accumulatedText += content
-          } catch {
-            // Non-JSON delta stream line
-          }
-        }
+        if (trimmed.startsWith('data: ')) readChunk(trimmed.slice(6).trim())
       }
     }
   } finally {
@@ -184,30 +203,24 @@ async function streamCompletion(
   const remaining = buffer.trim()
   if (remaining) {
     if (remaining.startsWith('data: ') && remaining !== 'data: [DONE]') {
-      try {
-        const parsed = JSON.parse(remaining.slice(6).trim())
-        const delta = parsed.choices?.[0]?.delta
-        const content = delta?.content ?? delta?.text ?? ''
-        if (content) accumulatedText += content
-      } catch {
-        // Ignore
-      }
+      readChunk(remaining.slice(6).trim())
     } else if (!accumulatedText) {
       try {
         const parsed = JSON.parse(remaining)
+        if (parsed.error) throw parseHttpError(parsed.error.status_code ?? 500, parsed.error.message || 'Generation failed')
         const content =
           parsed.choices?.[0]?.message?.content ??
           parsed.choices?.[0]?.delta?.content ??
           parsed.choices?.[0]?.text ??
           ''
         if (content) accumulatedText = content
-      } catch {
-        // Ignore
+      } catch (e) {
+        if (e instanceof ApiError) throw e
       }
     }
   }
 
-  return accumulatedText
+  return accumulatedText || lastStatus
 }
 
 /**
@@ -289,7 +302,10 @@ export async function generateImage(opts: GenerateImageOptions): Promise<{ media
 export interface GenerateVideoOptions {
   prompt: string
   model: string
-  initialImage: Buffer
+  aspectRatio: '16:9' | '9:16'
+  durationSec: number
+  /** Omitted for text-to-video models. */
+  initialImage?: Buffer
   signal?: AbortSignal
   onProgress?: (fraction: number, message: string) => void
 }
@@ -301,20 +317,18 @@ export async function generateVideo(opts: GenerateVideoOptions): Promise<{ media
   const base = getBaseUrl()
   const cleanPrompt = `${opts.prompt.trim()} ${NO_MUSIC}`
 
+  const content: Array<{ type: 'text'; text: string } | { type: 'image_url'; image_url: { url: string } }> = [
+    { type: 'text', text: cleanPrompt }
+  ]
+  if (opts.initialImage) {
+    content.push({ type: 'image_url', image_url: { url: `data:image/png;base64,${opts.initialImage.toString('base64')}` } })
+  }
+
   const body = {
     model: opts.model,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          { type: 'text', text: cleanPrompt },
-          {
-            type: 'image_url',
-            image_url: { url: `data:image/png;base64,${opts.initialImage.toString('base64')}` }
-          }
-        ]
-      }
-    ],
+    messages: [{ role: 'user', content }],
+    // Flow2API's resolver reads orientation and duration from here to pick the internal Veo model.
+    generationConfig: { aspectRatio: opts.aspectRatio, durationSeconds: opts.durationSec },
     stream: true
   }
 
@@ -323,7 +337,8 @@ export async function generateVideo(opts: GenerateVideoOptions): Promise<{ media
 
   const urls = extractMediaUrls(markdown)
   if (!urls.length) {
-    throw new Error('Flow2API selesai tanpa mengembalikan tautan video hasil')
+    const reason = markdown.trim().slice(0, 300)
+    throw new Error(`Flow2API selesai tanpa mengembalikan tautan video hasil${reason ? `: ${reason}` : ''}`)
   }
 
   // Pick first mp4 if available, or first media url

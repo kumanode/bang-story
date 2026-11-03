@@ -5,6 +5,8 @@ export interface Flow2ApiModel {
   name: string
   family: string
   kind: 'image' | 'video'
+  /** Model name sent to Flow2API; its resolver picks the internal Veo key from image count, aspect and duration. */
+  apiModel?: string
   durations: number[]
   supportsRef: boolean
   maxRefs: number
@@ -40,6 +42,7 @@ export const FLOW2API_IMAGE_MODELS: Flow2ApiModel[] = [
 export const FLOW2API_VIDEO_MODELS: Flow2ApiModel[] = [
   {
     id: 'veo-3.1-fast-i2v',
+    apiModel: 'veo-i2v-fast',
     name: 'Veo 3.1 Fast (I2V)',
     family: 'Google Veo',
     kind: 'video',
@@ -51,6 +54,7 @@ export const FLOW2API_VIDEO_MODELS: Flow2ApiModel[] = [
   },
   {
     id: 'veo-3.1-lite-i2v',
+    apiModel: 'veo-i2v-lite',
     name: 'Veo 3.1 Lite (I2V)',
     family: 'Google Veo',
     kind: 'video',
@@ -62,6 +66,7 @@ export const FLOW2API_VIDEO_MODELS: Flow2ApiModel[] = [
   },
   {
     id: 'omni-1.1-flash',
+    apiModel: 'Omni 1.1 Flash',
     name: 'Omni 1.1 Flash',
     family: 'Google Flow',
     kind: 'video',
@@ -73,6 +78,7 @@ export const FLOW2API_VIDEO_MODELS: Flow2ApiModel[] = [
   },
   {
     id: 'veo-3.1-fast',
+    apiModel: 'veo-fast',
     name: 'Veo 3.1 Fast (T2V)',
     family: 'Google Veo',
     kind: 'video',
@@ -94,38 +100,46 @@ export function getFlow2ApiModel(id: string | null | undefined, kind: 'image' | 
 }
 
 /**
- * Resolves a base model ID into the exact model name expected by Flow2API,
- * incorporating orientation (landscape/portrait) and clip duration.
+ * Resolves an image model ID into the exact model name expected by Flow2API, including orientation.
  */
-export function resolveFlow2ApiModelId(
-  baseId: string,
-  aspectRatio: AspectRatio,
-  durationSec = 6
-): string {
+export function resolveFlow2ApiModelId(baseId: string, aspectRatio: AspectRatio): string {
   const orient = aspectRatio === '9:16' ? 'portrait' : 'landscape'
   const clean = (baseId || '').trim()
-
-  // If already fully specified with landscape/portrait, preserve or adjust orientation
   if (clean.includes('-landscape') || clean.includes('-portrait')) {
     return clean.replace(/-(landscape|portrait)$/, `-${orient}`)
   }
-
-  // Find model definition
-  const videoModel = FLOW2API_VIDEO_MODELS.find((m) => m.id === clean)
-  if (videoModel) {
-    const allowed = videoModel.durations
-    let dur = 6
-    if (allowed.length) {
-      const closest = allowed.reduce((prev, curr) =>
-        Math.abs(curr - durationSec) < Math.abs(prev - durationSec) ? curr : prev
-      )
-      dur = closest
-    }
-    return `${clean}-${dur}s-${orient}`
-  }
-
-  // For image models
   return `${clean}-${orient}`
+}
+
+export interface Flow2ApiVideoRequest {
+  model: string
+  aspectRatio: '16:9' | '9:16'
+  durationSec: number
+  /** False for text-to-video models: sending the clip image would switch Flow2API to image-to-video. */
+  withImage: boolean
+}
+
+/**
+ * Maps a catalog video model to Flow2API's public alias plus generationConfig values. Flow2API rejects
+ * unknown names like `veo-3.1-fast-i2v-6s-landscape` with an in-stream error, so the internal
+ * Veo key (orientation, duration, i2v vs t2v) must be left to its own resolver.
+ */
+export function resolveFlow2ApiVideo(baseId: string, aspectRatio: AspectRatio, durationSec = 6): Flow2ApiVideoRequest {
+  // Older builds stored fully suffixed IDs such as `veo-3.1-fast-i2v-6s-landscape`.
+  const clean = (baseId || '').trim().replace(/-\d+s-(landscape|portrait)$/, '').replace(/-(landscape|portrait)$/, '')
+  const known = FLOW2API_VIDEO_MODELS.find((m) => m.id === clean)
+  const model = known ?? (clean ? null : getFlow2ApiModel(null, 'video'))
+  const allowed = model?.durations ?? []
+  const dur = allowed.length
+    ? allowed.reduce((prev, curr) => (Math.abs(curr - durationSec) < Math.abs(prev - durationSec) ? curr : prev))
+    : durationSec
+  return {
+    // Unknown IDs are passed through so users can type any model Flow2API itself lists.
+    model: model?.apiModel ?? clean,
+    aspectRatio: aspectRatio === '9:16' ? '9:16' : '16:9',
+    durationSec: dur,
+    withImage: model ? model.supportsRef : true
+  }
 }
 
 /**

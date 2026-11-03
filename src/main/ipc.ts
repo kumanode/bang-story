@@ -11,6 +11,7 @@ import type {
   ModelSource,
   NewProjectInput,
   ProjectSnapshot,
+  ThumbnailRequest,
   TtsProvider,
   VoiceOption,
   WordTiming
@@ -53,13 +54,13 @@ import { BUILTIN_SFX } from '@shared/sfx'
 import type { Clip } from '@shared/types'
 import { clearSecret, keyStatuses, recordCheck, revealSecret, setSecret } from './secrets'
 import { dropCache, getSettings, setSettings } from './settings'
-import { probeDurationMs, probeSize, probeVideoCodec } from './services/audio'
+import { probeDurationMs, probeSize, probeVideoCodec, toYoutubeThumbnail } from './services/audio'
 import * as eleven from './services/elevenlabs'
 import * as gemini from './services/gemini'
 import * as f2a from './services/flow2api'
 import * as hf from './services/higgsfield'
 import * as llm from './services/llm'
-import { generateScript, generateVisuals, generateMusicPrompt, generateYoutubeMetadata } from './story'
+import { generateScript, generateVisuals, generateMusicPrompt, generateThumbnailConcept, generateYoutubeMetadata } from './story'
 
 
 type Handler = (...args: any[]) => unknown
@@ -104,10 +105,18 @@ export function registerIpc(): void {
   handle('story:visuals', (projectId: string, mode: 'missing' | 'all') => generateVisuals(projectId, mode === 'all' ? 'all' : 'missing'))
 
   handle('generate:clipImage', (clipId: string) => generateClipImage(clipId))
-  handle('generate:thumbnail', (projectId: string, prompt: string, variation: number) => {
-    if (!prompt.trim()) throw new Error('Prompt thumbnail masih kosong')
-    if (!Number.isInteger(variation) || variation < 1 || variation > 3) throw new Error('Jumlah variasi thumbnail tidak valid')
-    return generateThumbnail(projectId, prompt, variation)
+  handle('story:thumbnailConcept', (projectId: string, title: string) => generateThumbnailConcept(projectId, String(title ?? '')))
+  handle('generate:thumbnail', (projectId: string, req: ThumbnailRequest) => {
+    if (!req?.prompt?.trim()) throw new Error('Prompt thumbnail masih kosong')
+    if (!req.title?.trim()) throw new Error('Pilih judul dulu sebelum membuat thumbnail')
+    if (!Number.isInteger(req.variation) || req.variation < 1 || req.variation > 3) throw new Error('Jumlah variasi thumbnail tidak valid')
+    return generateThumbnail(projectId, {
+      title: String(req.title),
+      prompt: String(req.prompt),
+      textHook: String(req.textHook ?? ''),
+      withText: req.withText === true,
+      variation: req.variation
+    })
   })
   handle('generate:clipVideo', (clipId: string) => generateClipVideo(clipId))
   handle('generate:clipTts', (clipId: string) => generateClipTts(clipId))
@@ -396,6 +405,21 @@ export function registerIpc(): void {
     return res.filePaths[0]
   })
   handle('export:reveal', (path: string) => shell.showItemInFolder(path))
+  handle('export:saveThumbnail', async (assetId: string, fileName: string) => {
+    const asset = getAsset(assetId)
+    if (!asset || asset.kind !== 'image' || asset.meta.thumbnail !== true) throw new Error('Thumbnail tidak ditemukan')
+    const win = BrowserWindow.getFocusedWindow()
+    const safe = String(fileName ?? '').replace(/[\\/:*?"<>|]+/g, '-').trim() || 'thumbnail'
+    const res = await dialog.showSaveDialog(win!, {
+      title: 'Simpan thumbnail YouTube',
+      defaultPath: join(defaultExportFolder(), `${safe}.jpg`),
+      filters: [{ name: 'Gambar JPG', extensions: ['jpg'] }]
+    })
+    if (res.canceled || !res.filePath) return null
+    mkdirSync(dirname(res.filePath), { recursive: true })
+    await toYoutubeThumbnail(assetAbsPath(asset.projectId, asset.localPath), res.filePath)
+    return res.filePath
+  })
 
   handle('app:version', () => app.getVersion())
   handle('app:copyText', (text: string) => clipboard.writeText(String(text)))

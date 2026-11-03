@@ -3,7 +3,7 @@ import { formatChapters } from '@shared/chapters'
 import { LANGUAGES, clipCountFor } from '@shared/models'
 import { estimateNarrationMs, needsVisual } from '@shared/script'
 import { getStyle } from '@shared/styles'
-import type { CameraPresetId, Clip, MotionStrength, MusicPrompt, ProjectBundle, TransitionId, YoutubeMetadata } from '@shared/types'
+import type { CameraPresetId, Clip, MotionStrength, MusicPrompt, ProjectBundle, ThumbnailConcept, TransitionId, YoutubeMetadata } from '@shared/types'
 import { applyVisuals, charactersOf, clipsOf, getBundle, getProject, replaceScript, type SceneVisual } from './repo'
 import { generateJson } from './services/llm'
 import { emit } from './events'
@@ -513,19 +513,9 @@ const YOUTUBE_SCHEMA = {
       type: 'array',
       items: { type: 'string' },
       description: '5 to 8 relevant trending hashtags including the core topic.'
-    },
-    thumbnailConcept: {
-      type: 'object',
-      additionalProperties: false,
-      properties: {
-        prompt: { type: 'string', description: 'English prompt for image generation to create the 16:9 thumbnail art.' },
-        composition: { type: 'string', description: 'Indonesian explanation of layout, lighting, character emotion, and empty space for title text.' },
-        textHook: { type: 'string', description: 'Punchy 2-4 word Indonesian text overlay for the thumbnail.' }
-      },
-      required: ['prompt', 'composition', 'textHook']
     }
   },
-  required: ['titles', 'description', 'hashtags', 'thumbnailConcept']
+  required: ['titles', 'description', 'hashtags']
 }
 
 export async function generateYoutubeMetadata(projectId: string): Promise<YoutubeMetadata> {
@@ -539,8 +529,7 @@ export async function generateYoutubeMetadata(projectId: string): Promise<Youtub
   const scenes = clips.slice(0, 40).map((c, i) => `${i + 1}. ${c.title}: ${(c.story || c.narration).slice(0, 120)}`).join('\n')
   const system = [
     'You are a YouTube packaging and SEO expert for high-engagement storytelling channels.',
-    `The video language is ${lang}. Write titles, description, and thumbnail hook in ${lang}.`,
-    'Write the thumbnail image prompt in English for optimal image generation.',
+    `The video language is ${lang}. Write titles and description in ${lang}.`,
     'Focus on emotional hooks, high CTR, and viewer retention.'
   ].join(' ')
   const prompt = [
@@ -555,18 +544,67 @@ export async function generateYoutubeMetadata(projectId: string): Promise<Youtub
   const titles = Array.isArray(r.titles) ? r.titles.map(str).filter(Boolean) : [p.title]
   const description = str(r.description)
   const hashtags = Array.isArray(r.hashtags) ? r.hashtags.map(str).filter(Boolean) : ['#Storytelling', '#BangStory']
-  const tc = r.thumbnailConcept ?? { prompt: '', composition: '', textHook: '' }
-  const thumbnailConcept = {
-    prompt: str(tc.prompt) || 'Cinematic dramatic storytelling scene, high contrast, atmospheric lighting, 16:9 wallpaper, 8k resolution',
-    composition: str(tc.composition) || 'Karakter utama di sepertiga kiri dengan ekspresi tegang, kontras tinggi, ruang kosong di kanan untuk teks hook',
-    textHook: str(tc.textHook) || 'RAHASIA TERBONGKAR!'
-  }
 
   return {
     titles: titles.length ? titles : [p.title],
     description: description ? `${description}\n\n⏱️ DAFTAR BAB:\n${chapters}\n\n${hashtags.join(' ')}` : `${p.synopsis}\n\n⏱️ DAFTAR BAB:\n${chapters}\n\n${hashtags.join(' ')}`,
     chapters,
-    hashtags,
-    thumbnailConcept
+    hashtags
+  }
+}
+
+const THUMBNAIL_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    prompt: {
+      type: 'string',
+      description:
+        'English image prompt for the thumbnail scene: one focal subject, emotion, setting, lighting, camera distance. No instructions about text.'
+    },
+    composition: { type: 'string', description: 'Short explanation of layout, lighting and emotion, in the video language.' },
+    textHook: { type: 'string', description: '2-4 word uppercase thumbnail text in the video language that complements the title.' }
+  },
+  required: ['prompt', 'composition', 'textHook']
+}
+
+/**
+ * A thumbnail concept for the title the user picked. Written after the title on purpose: a thumbnail that
+ * shows the same promise as the title converts better than one planned in isolation.
+ */
+export async function generateThumbnailConcept(projectId: string, title: string): Promise<ThumbnailConcept> {
+  const b = getBundle(projectId)
+  const p = b.project
+  const clean = title.trim()
+  if (!clean) throw new Error('Pilih atau tulis judul dulu.')
+  if (!b.clips.length) throw new Error('Naskah masih kosong.')
+  const lang = languageOf(p.language)
+  const scenes = b.clips.slice(0, 40).map((c, i) => `${i + 1}. ${c.title}: ${(c.story || c.narration).slice(0, 120)}`).join('\n')
+  const cast = b.characters.map((c) => `- ${c.name}: ${c.description}`).join('\n')
+  const system = [
+    'You design YouTube thumbnails for storytelling channels that get high click-through rates.',
+    'The thumbnail and the title must work as a pair: the picture shows the emotional moment the title promises,',
+    'raises a question, and does not spoil the ending.',
+    'Keep it simple enough to read at phone size: one focal subject (usually the main character, face large and',
+    'expressive), one strong prop or setting cue, high contrast, and empty space on one side for big text.',
+    `Write prompt in English. Write composition and textHook in ${lang}.`,
+    'textHook adds tension the title does not already say (never repeat the title word for word).'
+  ].join(' ')
+  const prompt = [
+    `Chosen title: ${clean}`,
+    `Synopsis: ${p.synopsis}`,
+    `Visual style: ${getStyle(p.styleId).name}`,
+    cast && `Characters:\n${cast}`,
+    `Scenes:\n${scenes}`
+  ]
+    .filter(Boolean)
+    .join('\n\n')
+
+  const r = await generateJson<Partial<ThumbnailConcept>>({ system, prompt, schema: THUMBNAIL_SCHEMA, name: 'thumbnail_concept' })
+  return {
+    title: clean,
+    prompt: str(r.prompt) || `Dramatic close-up of the main character reacting to the moment described by the title "${clean}", high contrast, atmospheric lighting`,
+    composition: str(r.composition),
+    textHook: str(r.textHook).toUpperCase() || clean.split(/\s+/).slice(0, 3).join(' ').toUpperCase()
   }
 }

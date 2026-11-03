@@ -40,6 +40,8 @@ export interface SfxItem {
   durationMs: number
   inMs?: number
   volumeDb?: number
+  /** Placed by "SFX otomatis"; running it again replaces these and keeps the ones placed by hand. */
+  auto?: boolean
 }
 
 export interface BuiltinSfx {
@@ -88,11 +90,26 @@ export interface YoutubeMetadata {
   description: string
   chapters: string
   hashtags: string[]
-  thumbnailConcept: {
-    prompt: string
-    composition: string
-    textHook: string
-  }
+}
+
+/** A thumbnail idea written for one chosen title, so the picture and the title sell the same promise. */
+export interface ThumbnailConcept {
+  title: string
+  /** English image prompt: the scene only, without the text instructions added at generation time. */
+  prompt: string
+  /** Layout, lighting and emotion, in the video language, for the user to read. */
+  composition: string
+  /** 2–4 word text drawn on the thumbnail; complements the title rather than repeating it. */
+  textHook: string
+}
+
+export interface ThumbnailRequest {
+  title: string
+  prompt: string
+  textHook: string
+  /** Draw `textHook` in the image; off leaves clean space for text added in another tool. */
+  withText: boolean
+  variation: number
 }
 
 export interface MusicPrompt {

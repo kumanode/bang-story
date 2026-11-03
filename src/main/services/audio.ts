@@ -65,3 +65,17 @@ export async function probeSize(absPath: string): Promise<{ width: number; heigh
 export async function probeVideoCodec(absPath: string): Promise<string | null> {
   return (await probe(absPath)).videoCodec
 }
+
+/**
+ * Writes a YouTube-ready thumbnail: 1280×720 JPG, cropped to fill. Image models return larger PNGs that can
+ * pass YouTube's 2 MB thumbnail limit.
+ */
+export function toYoutubeThumbnail(srcPath: string, destPath: string): Promise<void> {
+  const args = ['-y', '-hide_banner', '-i', srcPath, '-vf', 'scale=1280:720:force_original_aspect_ratio=increase,crop=1280:720', '-frames:v', '1', '-q:v', '2', destPath]
+  return new Promise((resolve, reject) => {
+    execFile(binPath(ffmpegStatic!), args, { windowsHide: true }, (err, _stdout, stderr) => {
+      if (err) reject(new Error(`Gagal menyimpan thumbnail: ${String(stderr).trim().split('\n').pop() ?? err.message}`))
+      else resolve()
+    })
+  })
+}

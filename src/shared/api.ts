@@ -22,6 +22,8 @@ import type {
   ProjectSnapshot,
   ProjectSummary,
   TtsProvider,
+  ThumbnailConcept,
+  ThumbnailRequest,
   VoiceOption,
   YoutubeMetadata
 } from './types'
@@ -43,11 +45,13 @@ export interface StudioApi {
     visuals(projectId: string, mode: 'missing' | 'all'): Promise<ProjectBundle>
     /** A background-music prompt that fits the finished script, for use in Suno or another music AI. */
     musicPrompt(projectId: string): Promise<MusicPrompt>
-    /** AI titles, description, timestamps, and thumbnail concept for YouTube. */
+    /** AI titles, description, and timestamps for YouTube. */
     youtubeMetadata(projectId: string): Promise<YoutubeMetadata>
+    /** A thumbnail idea written for the title the user picked. */
+    thumbnailConcept(projectId: string, title: string): Promise<ThumbnailConcept>
   }
   generate: {
-    thumbnail(projectId: string, prompt: string, variation: number): Promise<Job>
+    thumbnail(projectId: string, req: ThumbnailRequest): Promise<Job>
     clipImage(clipId: string): Promise<Job>
     clipVideo(clipId: string): Promise<Job>
     clipTts(clipId: string): Promise<Job>
@@ -109,6 +113,8 @@ export interface StudioApi {
     defaultFolder(): Promise<string>
     pickFolder(): Promise<string | null>
     reveal(path: string): Promise<void>
+    /** Saves a thumbnail as a 1280×720 JPG through a save dialog; null when cancelled. */
+    saveThumbnail(assetId: string, fileName: string): Promise<string | null>
   }
   app: {
     openExternal(url: string): Promise<void>
