@@ -72,13 +72,22 @@ Aturan edit (`renderer/src/pages/project/editor/Timeline.tsx`):
      filter `perspective` untuk gerak kamera, scale ke ukuran output;
    - video: `-ss mediaIn`, `fps`, `tpad` (frame terakhir ditahan kalau video lebih pendek), gerak kamera opsional
      dengan cara yang sama.
-3. **Satu pass FFmpeg** untuk semuanya:
-   - rantai `xfade` antar segmen (offset = awal segmen berikutnya, durasi = overlap);
-   - overlay gambar (`overlay` dengan `enable=between(t,...)`);
-   - caption + teks overlay lewat filter `ass` (libass) dengan `fontsdir` berisi font bawaan;
-  - audio: setiap suara narasi dan SFX `atrim` (potongan) → `volume` → `adelay` (posisi), lalu `amix`; musik `-stream_loop -1` → `atrim` mulai di `musicIn` → panjang → `volume` → fade
-     out → `adelay`; turunkan musik saat narasi dengan `sidechaincompress`; `loudnorm` −14 LUFS (opsional).
-4. Hasil: MP4 (H.264 + AAC, `+faststart`), dan `.srt` opsional. Nama file yang sudah ada diberi akhiran `-2`, `-3`.
+3. **Gabungkan blok video**: maksimal 20 segmen per blok dengan overlap pada batas blok, lalu concat menjadi satu
+   video sementara. Transisi tetap memakai `planSegments` dan durasi yang sama seperti pratinjau.
+4. **Campur audio** dalam jendela 30 detik agar suara klip tidak perlu dibuka bersamaan. Tiap jendela menerapkan
+   potongan dan gain suara, SFX, posisi musik, ducking narasi, dan fade. Hasil WAV tiap jendela digabung berurutan.
+5. **Pass MP4 final** memakai video gabungan, WAV, overlay gambar (`overlay` dengan `enable=between(t,...)`),
+   caption + teks overlay lewat filter `ass` (libass) dengan `fontsdir` berisi font bawaan, lalu loudness
+   normalization. Hasilnya MP4 (H.264 + AAC, `+faststart`) dan `.srt` opsional.
+
+Berkas segmen yang valid disimpan di cache per proyek memakai kunci dari isi klip, aset, dan opsi ekspor. Jika
+ekspor gagal, percobaan berikutnya memakai segmen yang masih cocok. Cache dibersihkan setelah ekspor berhasil dan
+saat proyek dihapus. Sebelum mulai, aplikasi memeriksa ruang kosong untuk output dan perkiraan berkas kerja.
+
+Dialog ekspor memilih CPU (bawaan) atau GPU NVIDIA bila encoder lolos tes encode singkat. Jika NVENC gagal pada
+blok atau pass final, tahap itu dicoba kembali dengan CPU dan status ekspor memberi tahu bahwa fallback dipakai.
+Parameter GPU memakai preset p5 HQ VBR CQ 19 (CQ 20 untuk 2160p); CPU tetap memakai libx264.
+Nama file yang sudah ada diberi akhiran `-2`, `-3`.
 
 Filter per klip berasal dari `shared/filters.ts`. Pratinjau memakai CSS; ekspor memakai FFmpeg dengan EQ, LUT RGB multiplikatif, color-channel mixer untuk sepia, lalu hue. CSS dan FFmpeg memakai urutan sama, tetapi ruang warna RGB/YUV masih dapat memberi beda kecil.
 
@@ -93,7 +102,10 @@ Gerak Ken Burns kustom tersimpan di `editor.clipFraming` dengan kunci ID klip; d
 - **Kotak rounded**: libass hanya bisa kotak siku, jadi kotak digambar sendiri sebagai drawing ASS (`\p1`,
   `roundedRectPath`) di layer 0. Lebar teks diukur dari file TTF (`fontMetrics.ts`), dan baris dipecah dengan
   `layoutCaptionLines` yang sama dengan pratinjau.
-- Kata yang sedang diucapkan diwarnai lewat event per kata (`\c`).
+- Kata yang sedang diucapkan diwarnai lewat event per kata. Kata aktif yang membesar digambar pada layer terpisah
+  di titik tengah katanya, supaya ukuran teksnya tidak menggeser baris. Spasi dan jarak ekstra untuk pop dihitung
+  dari konstanta bersama. Kapsul memakai rounded rectangle ASS, dengan padding dan radius yang sama dengan
+  pratinjau; pop masuk berlangsung 80 ms.
 
 ## Menambah fitur di editor: daftar periksa
 

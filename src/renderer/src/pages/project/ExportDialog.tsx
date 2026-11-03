@@ -42,6 +42,7 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose: () => 
   const [ytLoading, setYtLoading] = useState(false)
   const [copied, setCopied] = useState<string | null>(null)
   const [thumbnailBusy, setThumbnailBusy] = useState(false)
+  const [nvenc, setNvenc] = useState(false)
   const thumbnails = Object.values(assets).filter((asset) => asset.kind === 'image' && asset.meta.thumbnail === true)
 
   const chaptersText = useMemo(() => formatChapters(clips), [clips])
@@ -95,6 +96,7 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose: () => 
 
   useEffect(() => {
     if (!open || !project) return
+    void window.api.exporter.nvencAvailable().then(setNvenc).catch(() => setNvenc(false))
     // A finished or failed export is not shown again; an export still running keeps its progress.
     setJobId((id) => (id && isRunning(useProject.getState().jobs[id]) ? id : null))
     void window.api.exporter.defaultFolder().then((folder) =>
@@ -102,6 +104,7 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose: () => 
         fileName: slug(project.title),
         resolution: 1080,
         fps: 30,
+        encoder: 'cpu',
         burnCaptions: project.editor.captionStyle !== 'none',
         writeSrt: false,
         normalizeAudio: true,
@@ -380,6 +383,21 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose: () => 
                   </button>
                 ))}
               </div>
+            </div>
+          </div>
+          <div className="flex flex-col gap-1.5">
+            <span className="text-sm font-semibold">Encoder video</span>
+            <div className={cx('grid gap-1.5', nvenc ? 'grid-cols-2' : 'grid-cols-1')}>
+              <button type="button" aria-pressed={(opts.encoder ?? 'cpu') === 'cpu'} onClick={() => set({ encoder: 'cpu' })} className={cx('rounded-xl px-3 py-2.5 text-left', (opts.encoder ?? 'cpu') === 'cpu' ? 'border-2 border-accent bg-accent-soft' : 'border border-line-2 hover:border-ink-2')}>
+                <span className="block text-sm font-semibold">Kualitas terbaik · CPU</span>
+                <span className="text-xs text-muted">Libx264, pilihan paling kompatibel</span>
+              </button>
+              {nvenc && (
+                <button type="button" aria-pressed={opts.encoder === 'nvenc'} onClick={() => set({ encoder: 'nvenc' })} className={cx('rounded-xl px-3 py-2.5 text-left', opts.encoder === 'nvenc' ? 'border-2 border-accent bg-accent-soft' : 'border border-line-2 hover:border-ink-2')}>
+                  <span className="block text-sm font-semibold">Lebih cepat · GPU NVIDIA</span>
+                  <span className="text-xs text-muted">Ukuran bisa sedikit lebih besar; otomatis kembali ke CPU jika gagal</span>
+                </button>
+              )}
             </div>
           </div>
           <div className="flex flex-col rounded-[14px] border border-line">

@@ -283,7 +283,7 @@ export function generateNarration(projectId: string, mode: 'missing' | 'all'): J
                 ctx
               )
             : await geminiTake(p, groupVoice, group, tmp, ctx, () =>
-                ctx.progress(0.05 + 0.85 * ((done + group.length * 0.6) / clips.length), 'Menyinkronkan caption dengan Whisper')
+                ctx.progress(0.05 + 0.85 * ((done + group.length * 0.6) / clips.length), `Menyinkronkan caption dengan Whisper · bagian ${g + 1} dari ${groups.length}`)
               )
         ctx.progress(0.05 + 0.85 * ((done + group.length * 0.9) / clips.length), 'Memotong suara per adegan')
         for (const s of segments) store(p, s, groupVoice, takeId, readFileSync(s.file))
@@ -301,16 +301,19 @@ export function generateNarration(projectId: string, mode: 'missing' | 'all'): J
  * Re-times caption words with the local Whisper model on each scene's audio: scenes whose timings are
  * estimates or came from an older Whisper method, or every Gemini-voiced scene with "all".
  */
-export function syncCaptions(projectId: string, mode: 'stale' | 'all' = 'stale'): Job {
+export function syncCaptions(projectId: string, mode: 'stale' | 'all' | 'force' = 'stale'): Job {
   const running = activeProjectJob(projectId, 'align')
   if (running) return running
   if (!whisperReady()) throw new Error('Model Whisper belum diunduh. Unduh dulu di Pengaturan, bagian Caption akurat.')
-  const targets = clipsOf(projectId).filter((c) => {
+  const allCandidates = clipsOf(projectId).filter((c) => {
     const a = getAsset(c.audioAssetId)
-    return !!a && (mode === 'all' ? a.provider !== 'elevenlabs' : captionNeedsSync(a))
+    return !!a && (mode === 'all' || mode === 'force' ? a.provider !== 'elevenlabs' : captionNeedsSync(a))
   })
+  const targets = allCandidates.filter((c) => mode === 'force' || getAsset(c.audioAssetId)?.meta.editedWords !== true)
+  const skipped = allCandidates.length - targets.length
+  if (!targets.length && skipped) throw new Error(`${skipped} klip dilewati karena caption diedit manual. Pilih “Timpa juga edit manual” bila ingin menggantinya.`)
   if (!targets.length) throw new Error('Semua caption sudah memakai waktu dari suara aslinya.')
-  const job = insertJob({ projectId, kind: 'align', provider: 'whisper' })
+  const job = insertJob({ projectId, kind: 'align', provider: 'whisper', payload: { mode, skipped } })
   emit.job(job)
   return runJob(job, 'whisper', async (ctx) => {
     const project = getProject(projectId)
@@ -324,10 +327,10 @@ export function syncCaptions(projectId: string, mode: 'stale' | 'all' = 'stale')
         if (!words.length) continue
         const seconds = (asset.durationMs ?? targets[i].durationMs) / 1000
         const timed = await timeScript(assetAbsPath(projectId, asset.localPath), words, project.language, seconds, tmp, ctx.signal)
-        updateAssetMeta(asset.id, { ...asset.meta, words: timed, estimatedTimings: false, timedBy: WHISPER_TIMING })
+        updateAssetMeta(asset.id, { ...asset.meta, words: timed, estimatedTimings: false, timedBy: WHISPER_TIMING, ...(mode === 'force' ? { editedWords: false } : {}) })
         emit.asset(getAsset(asset.id)!)
       }
-      return { message: `${targets.length} klip disinkronkan` }
+      return { message: `${targets.length} klip disinkronkan${skipped ? ` · ${skipped} edit manual dilewati` : ''}` }
     } finally {
       rmSync(tmp, { recursive: true, force: true })
     }

@@ -13,18 +13,24 @@ Cara menaikkan versi ada di [docs/pengembangan.md](docs/pengembangan.md#versi-da
 - Track SFX dengan impor file drag & drop, pemotongan awal/akhir, volume per efek, snap, dan seleksi hapus.
 - Generator tiga variasi thumbnail 16:9 dari prompt konsep YouTube.
 - Kunci per track, tombol ekspor di header editor, serta panah untuk melangkah satu frame.
+- Pilihan durasi hingga 30 menit, penulisan naskah dan rencana visual per kelompok, serta progres tiap kelompok.
+- Opsi encoder NVENC, ekspor video/audio bertahap, pemeriksaan ruang disk, dan cache segmen ekspor yang bisa dipakai ulang.
 
 ### Diubah
 - Editor timeline dapat diubah ukurannya dengan batas jendela dan kontrol keyboard.
 - Undo/redo mempertahankan hasil job AI; geser slider dan item timeline menjadi satu gestur undo.
 - Filter, transisi, caption aktif, bab YouTube, dan duplikasi proyek kini memakai data bersama atau pemetaan ID yang konsisten.
 - Hasil bab YouTube menggabungkan adegan di bawah 10 detik; video yang terlalu pendek menampilkan peringatan jumlah bab.
+- Timeline dan daftar Storyboard memuat item bertahap agar proyek ratusan klip tetap ringan.
 
 ### Diperbaiki
 - Loop audio pratinjau tidak restart karena array kosong berubah tiap render.
 - Outline kapsul kata dan glow caption ekspor terlihat dan direset dengan benar.
 - Mute track reset saat proyek berganti; klip lokal divalidasi kepemilikan dan dukungan codec.
 - Upload SFX menolak durasi yang tidak terbaca; ukuran overlay reset ke nilai bawaan dalam rentang.
+- Spasi caption tetap utuh saat kata aktif membesar; tata letak ekspor tidak bergeser, dan kapsul ekspor memakai bentuk rounded sebenarnya.
+- Sinkron Whisper melindungi edit kata manual dengan konfirmasi terpisah untuk menimpanya.
+- Ekspor panjang membatasi jumlah input FFmpeg per tahap, memakai ulang segmen yang cocok setelah gagal, dan beralih ke CPU bila NVENC gagal.
 
 ## [1.0.0] - 2026-10-02
 

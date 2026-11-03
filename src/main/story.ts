@@ -6,6 +6,7 @@ import { getStyle } from '@shared/styles'
 import type { CameraPresetId, Clip, MotionStrength, MusicPrompt, ProjectBundle, TransitionId, YoutubeMetadata } from '@shared/types'
 import { applyVisuals, charactersOf, clipsOf, getBundle, getProject, replaceScript, type SceneVisual } from './repo'
 import { generateJson } from './services/llm'
+import { emit } from './events'
 
 const CAMERA_IDS = CAMERA_PRESETS.map((c) => c.id)
 const STRENGTH_IDS = MOTION_STRENGTHS.map((m) => m.id)
@@ -54,6 +55,31 @@ interface ScriptPlan {
   scenes?: { title?: string; story?: string; narration?: string }[]
 }
 
+interface ScriptOutline {
+  title?: string
+  acts?: { title?: string; summary?: string; scenes?: number }[]
+}
+
+const SCRIPT_OUTLINE_SCHEMA = {
+  type: 'object', additionalProperties: false,
+  properties: {
+    title: { type: 'string' },
+    acts: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
+      title: { type: 'string' }, summary: { type: 'string' }, scenes: { type: 'integer' }
+    }, required: ['title', 'summary', 'scenes'] } }
+  }, required: ['title', 'acts']
+}
+
+interface PendingLongScript {
+  fingerprint: string
+  title: string
+  acts: { title: string; summary: string; scenes: number }[]
+  groups: Map<number, { title?: string; story?: string; narration?: string }[]>
+}
+
+// If a model call fails, successful groups remain available for the user's next retry in this app session.
+const pendingLongScripts = new Map<string, PendingLongScript>()
+
 /** Writes the scene-by-scene script (story and voice-over) that the user reviews before any visuals exist. */
 export async function generateScript(projectId: string): Promise<ProjectBundle> {
   const project = getProject(projectId)
@@ -75,13 +101,92 @@ export async function generateScript(projectId: string): Promise<ProjectBundle> 
     `Write exactly ${count} scenes.`
   ].join('\n\n')
 
-  const plan = await generateJson<ScriptPlan>({ system, prompt, schema: SCRIPT_SCHEMA, name: 'script' })
-  const scenes = (plan.scenes ?? []).filter((c) => str(c.narration) || str(c.story))
+  let title = project.title
+  let rawScenes: { title?: string; story?: string; narration?: string }[]
+  if (count <= 60) {
+    const plan = await generateJson<ScriptPlan>({ system, prompt, schema: SCRIPT_SCHEMA, name: 'script' })
+    title = str(plan.title) || title
+    rawScenes = (plan.scenes ?? []).filter((c) => str(c.narration) || str(c.story))
+  } else {
+    const fingerprint = JSON.stringify([project.synopsis, project.durationSec, project.language])
+    let pending = pendingLongScripts.get(projectId)
+    if (!pending || pending.fingerprint !== fingerprint) {
+      const outline = await generateJson<ScriptOutline>({
+        system: `${system} First design a coherent act outline for a long video. Distribute scenes across 5 to 10 acts and make the counts sum to exactly ${count}.`,
+        prompt: `${prompt}\n\nReturn only the video title and the act outline. Each act needs a short summary and an exact scene count; all counts must sum to ${count}.`,
+        schema: SCRIPT_OUTLINE_SCHEMA,
+        name: 'script-outline'
+      })
+      const acts = (outline.acts ?? []).map((a, i) => ({
+        title: str(a.title) || `Babak ${i + 1}`,
+        summary: str(a.summary),
+        scenes: Math.max(1, Math.round(Number(a.scenes) || 1))
+      }))
+      if (!acts.length) throw new Error('Model tidak menghasilkan kerangka babak. Coba lagi.')
+      // Keep the outline's pacing while making the requested scene count exact.
+      const sum = acts.reduce((n, a) => n + a.scenes, 0)
+      let delta = count - sum
+      if (delta >= 0) acts[acts.length - 1].scenes += delta
+      else {
+        for (let i = acts.length - 1; i >= 0 && delta < 0; i--) {
+          const reduce = Math.min(acts[i].scenes - 1, -delta)
+          acts[i].scenes -= reduce
+          delta += reduce
+        }
+        if (delta < 0) acts[acts.length - 1].scenes += delta
+      }
+      pending = { fingerprint, title: str(outline.title) || title, acts, groups: new Map() }
+      pendingLongScripts.set(projectId, pending)
+    }
+    title = pending.title
+    const groups: { from: number; count: number; act: (typeof pending.acts)[number] }[] = []
+    let offset = 0
+    for (const act of pending.acts) {
+      let left = act.scenes
+      while (left > 0) {
+        const take = Math.min(30, left)
+        groups.push({ from: offset, count: take, act })
+        offset += take
+        left -= take
+      }
+    }
+    // Spoken words that fill each scene's share of the target length, at the pace estimateNarrationMs assumes.
+    const wordsPerScene = Math.max(8, (project.durationSec / count - 0.6) * 2.6)
+    const wordsLow = Math.round(wordsPerScene * 0.85)
+    const wordsHigh = Math.round(wordsPerScene * 1.15)
+    const built: { title?: string; story?: string; narration?: string }[] = []
+    for (let i = 0; i < groups.length; i++) {
+      const group = groups[i]
+      let rows = pending.groups.get(i)
+      if (!rows) {
+        emit.storyProgress({ projectId, message: `Menulis adegan ${group.from + 1}–${group.from + group.count} dari ${count}` })
+        const previous = [...pending.groups.values()].flat().slice(-2)
+        const groupPrompt = [
+          `Idea / synopsis:\n${project.synopsis}`,
+          `Target video length: about ${project.durationSec} seconds. Write scenes ${group.from + 1} through ${group.from + group.count} (exactly ${group.count} scenes).`,
+          `Video title: ${pending.title}`,
+          `Act: ${group.act.title}\nAct summary: ${group.act.summary}`,
+          previous.length ? `Continue naturally from these last scenes:\n${previous.map((s) => `${s.title}: ${s.story} Narration: ${s.narration}`).join('\n')}` : 'This is the opening group; start with a strong hook.',
+          `Write all scene titles, story notes and narration in ${lang}. Preserve character names and causal continuity. Narration should be ${wordsLow} to ${wordsHigh} spoken words per scene.`
+        ].join('\n\n')
+        const plan = await generateJson<ScriptPlan>({ system, prompt: groupPrompt, schema: SCRIPT_SCHEMA, name: `script-part-${i + 1}` })
+        // Extra scenes would shift every later group, so they are dropped; too few means the group is retried.
+        rows = (plan.scenes ?? []).filter((c) => str(c.narration) || str(c.story)).slice(0, group.count)
+        if (rows.length < group.count) throw new Error(`Babak ${i + 1} menghasilkan ${rows.length} dari ${group.count} adegan. Coba lagi untuk melanjutkan.`)
+        pending.groups.set(i, rows)
+      }
+      built.push(...rows)
+      emit.storyProgress({ projectId, message: `Naskah ${Math.min(count, group.from + group.count)} dari ${count} adegan selesai` })
+    }
+    rawScenes = built
+    pendingLongScripts.delete(projectId)
+  }
+  const scenes = rawScenes.filter((c) => str(c.narration) || str(c.story))
   if (!scenes.length) throw new Error('Model tidak menghasilkan adegan. Coba lagi atau pilih model lain di Pengaturan.')
 
   replaceScript(
     projectId,
-    str(plan.title) || project.title,
+    title,
     scenes.map((c, i) => ({
       title: str(c.title) || `Adegan ${i + 1}`,
       story: str(c.story),
@@ -255,7 +360,7 @@ export async function generateVisuals(projectId: string, mode: 'missing' | 'all'
   const targets = clips.map((c, i) => ({ clip: c, n: i + 1 })).filter((t) => mode === 'all' || needsVisual(t.clip))
   if (!targets.length) return getBundle(projectId)
 
-  const known = charactersOf(projectId)
+  let known = charactersOf(projectId)
   const system = [
     'You are the storyboard artist for a faceless YouTube video. The script is final; you design the pictures.',
     'For each requested scene you describe ONE still image, choose the camera move and its strength over that image, the transition into the next scene, and write how the image would move if it is animated as an AI video.',
@@ -268,43 +373,51 @@ export async function generateVisuals(projectId: string, mode: 'missing' | 'all'
     '6. No readable text, signs, captions or labels in the image. Vary shot sizes, angles and camera moves across scenes so the video never feels repetitive.',
     'Write "world", "identity", "outfit", "setting", "action", "wardrobe", "framing", "avoid" and "motion" in English.'
   ].join('\n')
-  const script = clips
-    .map((c, i) => `Scene ${i + 1}: ${c.title}\nStory: ${c.story || '(none)'}\nNarration (${languageOf(project.language)}): ${c.narration || '(none)'}`)
-    .join('\n\n')
-  const prompt = [
-    `Visual style of the video (for your framing choices only, do not repeat it in the descriptions): ${getStyle(project.styleId).name}.`,
-    `Frame format: ${project.aspectRatio === '9:16' ? 'vertical 9:16' : 'horizontal 16:9'}.`,
-    `Idea of the video: ${project.synopsis}`,
-    known.length ? `Existing characters (keep them exactly):\n${known.map((c) => `- ${c.name}: ${c.description}`).join('\n')}` : 'There are no existing characters yet.',
-    `Full script:\n${script}`,
-    `Write visuals for these scenes only: ${targets.map((t) => t.n).join(', ')}.`,
-    `Allowed camera values: ${CAMERA_IDS.join(', ')}. Allowed strength values: ${STRENGTH_IDS.join(', ')}. Allowed transition values: ${TRANSITION_IDS.join(', ')}.`
-  ].join('\n\n')
-
-  const plan = await generateJson<VisualPlan>({ system, prompt, schema: VISUAL_SCHEMA, name: 'visuals' })
-  const answers = (plan.scenes ?? []).filter((s) => str(s.setting) || str(s.action))
-  if (!answers.length) throw new Error('Model tidak menghasilkan visual. Coba lagi atau pilih model lain di Pengaturan.')
-
-  // Match answers to scenes by number; anything unnumbered fills the remaining targets in order.
-  const byNumber = new Map<number, (typeof answers)[number]>()
-  const loose: typeof answers = []
-  for (const a of answers) {
-    const n = Number(a.scene)
-    if (Number.isInteger(n) && targets.some((t) => t.n === n) && !byNumber.has(n)) byNumber.set(n, a)
-    else loose.push(a)
+  const arc = clips.map((c, i) => `${i + 1}. ${c.title}: ${(c.story || c.narration).slice(0, 110)}`).join('\n')
+  const groups: (typeof targets)[] = []
+  for (let i = 0; i < targets.length; i += 20) groups.push(targets.slice(i, i + 20))
+  for (let gi = 0; gi < groups.length; gi++) {
+    const group = groups[gi]
+    const wanted = new Set(group.map((t) => t.n))
+    for (const t of group) {
+      if (t.n > 1) wanted.add(t.n - 1)
+      if (t.n < clips.length) wanted.add(t.n + 1)
+    }
+    const localScript = [...wanted].sort((a, b) => a - b).map((n) => {
+      const c = clips[n - 1]
+      return `Scene ${n}: ${c.title}\nStory: ${c.story || '(none)'}\nNarration (${languageOf(project.language)}): ${c.narration || '(none)'}`
+    }).join('\n\n')
+    const prompt = [
+      `Visual style of the video (for framing only): ${getStyle(project.styleId).name}.`,
+      `Frame format: ${project.aspectRatio === '9:16' ? 'vertical 9:16' : 'horizontal 16:9'}.`,
+      `Idea: ${project.synopsis}`,
+      `Story arc summary by scene:\n${arc}`,
+      known.length ? `Recurring characters (preserve identity and outfit across all groups):\n${known.map((c) => `- ${c.name}: ${c.description}`).join('\n')}` : 'There are no known recurring characters yet.',
+      `Full script for this group and its neighbors only:\n${localScript}`,
+      `Write visual plans for scenes ${group.map((t) => t.n).join(', ')} only. Keep scene numbers unchanged.`,
+      `Allowed camera values: ${CAMERA_IDS.join(', ')}. Allowed strength values: ${STRENGTH_IDS.join(', ')}. Allowed transition values: ${TRANSITION_IDS.join(', ')}.`
+    ].join('\n\n')
+    emit.storyProgress({ projectId, message: `Menyusun visual kelompok ${gi + 1} dari ${groups.length}` })
+    const plan = await generateJson<VisualPlan>({ system, prompt, schema: VISUAL_SCHEMA, name: `visuals-part-${gi + 1}` })
+    const answers = (plan.scenes ?? []).filter((s) => str(s.setting) || str(s.action))
+    if (!answers.length) throw new Error(`Model tidak menghasilkan visual untuk kelompok ${gi + 1}. Coba lagi.`)
+    const byNumber = new Map<number, (typeof answers)[number]>()
+    const loose: typeof answers = []
+    for (const a of answers) {
+      const n = Number(a.scene)
+      if (Number.isInteger(n) && group.some((t) => t.n === n) && !byNumber.has(n)) byNumber.set(n, a)
+      else loose.push(a)
+    }
+    const updates: SceneVisual[] = []
+    for (const t of group) {
+      const a = byNumber.get(t.n) ?? loose.shift()
+      if (a) updates.push(toSceneVisual(t.clip, a))
+    }
+    if (updates.length !== group.length) throw new Error(`Visual kelompok ${gi + 1} hanya mencakup ${updates.length} dari ${group.length} adegan. Coba lagi.`)
+    applyVisuals(projectId, (plan.characters ?? []).filter((c) => str(c.name)).map((c) => ({ name: str(c.name), description: characterLook(c) })), updates)
+    known = charactersOf(projectId)
+    emit.storyProgress({ projectId, message: `Visual ${gi + 1} dari ${groups.length} kelompok selesai` })
   }
-  const updates: SceneVisual[] = []
-  for (const t of targets) {
-    const a = byNumber.get(t.n) ?? loose.shift()
-    if (!a) continue
-    updates.push(toSceneVisual(t.clip, a))
-  }
-
-  applyVisuals(
-    projectId,
-    (plan.characters ?? []).filter((c) => str(c.name)).map((c) => ({ name: str(c.name), description: characterLook(c) })),
-    updates
-  )
   return getBundle(projectId)
 }
 

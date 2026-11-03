@@ -27,7 +27,7 @@ export function ClipVisual({
       {showVideo ? (
         <video src={video.url} poster={image?.url} className="size-full object-cover" autoPlay loop muted playsInline />
       ) : image ? (
-        <img src={image.url} alt="" className="size-full object-cover" draggable={false} />
+        <img src={image.url} alt="" loading="lazy" className="size-full object-cover" draggable={false} />
       ) : running ? null : (
         <div
           className={cx(

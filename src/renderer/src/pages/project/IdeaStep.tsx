@@ -107,6 +107,7 @@ export function IdeaStep() {
   const { project, clips, updateProject, flush, load } = useProject()
   const { toast, go } = useApp()
   const [busy, setBusy] = useState(false)
+  const [planMessage, setPlanMessage] = useState('')
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [writer, setWriter] = useState<{ provider: LlmProvider; model: string } | null>(null)
   const [keys, setKeys] = useState<KeyStatus[]>([])
@@ -118,6 +119,10 @@ export function IdeaStep() {
     })
     void window.api.settings.keys().then(setKeys)
   }, [])
+
+  useEffect(() => window.api.on.storyProgress((progress) => {
+    if (progress.projectId === project?.id) setPlanMessage(progress.message)
+  }), [project?.id])
 
   // Before any narration exists, move to a narrator service that has a working key.
   const hasVoice = clips.some((c) => c.audioAssetId)
@@ -156,6 +161,7 @@ export function IdeaStep() {
       if (!ok) return
     }
     setBusy(true)
+    setPlanMessage('Menyiapkan naskah…')
     try {
       await flush()
       const bundle = await window.api.story.script(project.id)
@@ -165,6 +171,7 @@ export function IdeaStep() {
       toast('error', errorText(e))
     } finally {
       setBusy(false)
+      setPlanMessage('')
     }
   }
 
@@ -330,7 +337,7 @@ export function IdeaStep() {
           </Button>
         )}
         <Button variant="primary" size="lg" className="h-[50px]" loading={busy} icon={!busy && <Sparkles className="size-[18px]" />} onClick={() => void compose()}>
-          {clips.length ? 'Susun ulang naskah' : 'Susun naskah'}
+          {busy ? planMessage || 'Menyusun naskah…' : clips.length ? 'Susun ulang naskah' : 'Susun naskah'}
         </Button>
       </footer>
     </div>

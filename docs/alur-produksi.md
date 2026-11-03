@@ -19,12 +19,19 @@ Ide cerita ──LLM──► Naskah (adegan + narasi) ──LLM──► Rencan
 ## 1. Ide → naskah (`generateScript`, `src/main/story.ts`)
 
 - Masukan: sinopsis, target durasi, bahasa.
-- Jumlah adegan: `clipCountFor(durasi)` = sekitar satu adegan per 5,5 detik (minimal 3).
+- Pilihan durasi: 1, 3, 5, 10, 15, 20, 25, atau 30 menit. Untuk durasi sampai 10 menit, targetnya sekitar satu adegan per 5,5 detik; di atas 10 menit sekitar satu adegan per 8 detik. Jumlah dibatasi maksimal 230 dan minimal 3.
+- Untuk durasi 15 menit atau lebih, halaman Ide memperlihatkan perkiraan jumlah adegan dan kredit gambar bila model menyediakan estimasi.
+- Sebelum membuat gambar atau video pada proyek berdurasi 10 menit atau lebih, aplikasi meminta konfirmasi jumlah adegan dan perkiraan kredit per adegan. Estimasi gambar menggunakan model yang dipilih; layanan yang tidak menyediakan endpoint estimasi tidak menampilkan jumlah kredit.
 - Skema JSON keluaran: `{ title, scenes: [{ title, story, narration }] }`.
 - Narasi 10–18 kata per adegan dan boleh memakai satu dua tag ekspresi berbahasa Inggris (`<short pause>`,
   `<long pause>`, `<chuckles>`, `<sigh>`, `<gasp>`, `<whispers>`). Daftar tag: `VOICE_TAGS` di `shared/speech.ts`.
 - Hasil disimpan dengan `replaceScript`. Durasi awal tiap klip diperkirakan dari jumlah kata
   (`estimateNarrationMs`: sekitar 2,6 kata per detik).
+
+Untuk naskah di atas 60 adegan, penulisan dilakukan bertahap: LLM membuat kerangka babak, lalu menulis paling
+banyak 30 adegan per kelompok. Setiap kelompok membawa ringkasan cerita, babak, dan adegan terakhir dari bagian
+sebelumnya agar alurnya tersambung. Progres ditampilkan per kelompok. Jika satu kelompok gagal, hasil kelompok
+yang sudah berhasil tersedia di memori selama aplikasi tetap terbuka untuk melanjutkan percobaan.
 
 Di langkah **Naskah** pengguna boleh mengubah, menambah, menghapus, dan mengurutkan adegan.
 
@@ -55,6 +62,10 @@ Wardrobe: Leo - custom for this scene: light-blue scrubs; the teenager - custom 
 Framing: ...
 Avoid: Earth landscape, aliens, spacesuits indoors
 ```
+
+Untuk proyek panjang, rencana visual dibagi menjadi kelompok 20 adegan. Ringkasan cerita penuh, naskah lokal, dan
+adegan tetangga disertakan agar konteks prompt cukup tanpa mengirim seluruh naskah berulang kali. Karakter yang
+dikenali pada kelompok sebelumnya ikut diteruskan. Progres dilaporkan per kelompok.
 
 Mode `missing` hanya menyusun adegan yang naskahnya berubah sejak rencana terakhir (`needsVisual`); mode `all`
 menyusun ulang semuanya. Pemeran lama tidak ditimpa; pemeran baru ditambahkan berdasarkan nama.
@@ -104,7 +115,11 @@ dan intonasinya konsisten. (Rekaman per klip menghasilkan suara yang sedikit ber
 - `align.ts` mencocokkan kata **naskah** ke kata yang didengar Whisper (edit distance). Ejaan caption tetap dari
   naskah; hanya waktunya dari Whisper.
 - Berjalan otomatis setelah narasi Gemini (`whisperAuto`), atau manual lewat tab Caption
-  (`syncCaptions`, mode `stale`/`all`). Hasil ditandai `meta.timedBy = 'whisper-dtw'`.
+  (`syncCaptions`, mode `stale`/`all`). Hasil ditandai `meta.timedBy = 'whisper-dtw'`. Narasi Gemini panjang
+  diproses per bagian maksimal sekitar 240 detik, dengan progres bagian; Whisper menerima potongan audio tiap
+  adegan, bukan satu file gabungan 30 menit.
+- Sinkron biasa melewati kata yang diedit manual (`meta.editedWords`) dan menunjukkan jumlah klip yang dilewati.
+  Aksi paksa meminta konfirmasi sebelum mengganti edit tersebut.
 
 ## 6. Prompt musik (`generateMusicPrompt`)
 

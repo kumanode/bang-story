@@ -132,10 +132,15 @@ export const DURATIONS: { sec: number; label: string }[] = [
   { sec: 60, label: '1 menit' },
   { sec: 180, label: '3 menit' },
   { sec: 300, label: '5 menit' },
-  { sec: 600, label: '10 menit' }
+  { sec: 600, label: '10 menit' },
+  { sec: 900, label: '15 menit' },
+  { sec: 1200, label: '20 menit' },
+  { sec: 1500, label: '25 menit' },
+  { sec: 1800, label: '30 menit' }
 ]
 
-/** Roughly one clip every ~5.5 seconds of narration. */
+/** Short videos use tighter cuts; long stories need fewer, longer scenes to keep production manageable. */
 export function clipCountFor(durationSec: number): number {
-  return Math.max(3, Math.min(120, Math.round(durationSec / 5.5)))
+  const secondsPerScene = durationSec > 600 ? 8 : 5.5
+  return Math.max(3, Math.min(230, Math.round(durationSec / secondsPerScene)))
 }

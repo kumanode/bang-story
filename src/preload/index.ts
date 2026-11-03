@@ -76,6 +76,7 @@ const api: StudioApi = {
   },
   exporter: {
     start: call('export:start'),
+    nvencAvailable: call('export:nvencAvailable'),
     defaultFolder: call('export:defaultFolder'),
     pickFolder: call('export:pickFolder'),
     reveal: call('export:reveal')
@@ -93,6 +94,7 @@ const api: StudioApi = {
     openFolder: call('whisper:openFolder')
   },
   on: {
+    storyProgress: listen(EVENTS.storyProgress),
     whisper: listen(EVENTS.whisper),
     job: listen(EVENTS.job),
     clip: listen(EVENTS.clip),

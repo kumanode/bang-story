@@ -1,15 +1,20 @@
 import { spawn } from 'node:child_process'
-import { copyFileSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
-import { join } from 'node:path'
+import { execFileSync } from 'node:child_process'
+import { createHash } from 'node:crypto'
+import { copyFileSync, existsSync, mkdirSync, readdirSync, renameSync, rmSync, statfsSync, statSync, writeFileSync } from 'node:fs'
+import { join, parse } from 'node:path'
 import ffmpegStatic from 'ffmpeg-static'
 import {
   CAPTION_BOX_PAD,
   CAPTION_BOX_RADIUS,
   CAPTION_ACTIVE_SCALE,
+  CAPTION_PILL_PAD_EM,
+  CAPTION_POP_DURATION_MS,
   CAPTION_GLOW_BLUR_RATIO,
   CAPTION_GLOW_OUTLINE_RATIO,
   CAPTION_MAX_WIDTH,
   captionFontFile,
+  captionWordGap,
   captionScaleOf,
   layoutCaptionLines,
   roundedRectPath,
@@ -196,6 +201,7 @@ function captionStyleLines(track: CaptionTrack, w: number, h: number): string[] 
     `Style: Cap,${font.name},${size},${assColor(style.color)},${assColor(style.color)},${outlineColor},&HFF000000,${font.bold},0,0,0,100,100,0,0,1,${outline},0,${align},${side},${side},${marginV},1`
   ]
   if (boxed) lines.push(`Style: CapBox,${font.name},${size},${assColor(style.box!, style.boxAlpha)},&H00FFFFFF,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1`)
+  if (style.pill) lines.push(`Style: CapPill,${font.name},${size},${assColor(style.highlight)},&H00FFFFFF,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1`)
   return lines
 }
 
@@ -209,7 +215,6 @@ function captionEvents(track: CaptionTrack, w: number, h: number): string[] {
   const measure = fontMeasure(join(fontsDir(), captionFontFile(style)))
   const lineH = px * style.fontInfo.cell
   const lines: string[] = []
-  const base = assInlineColor(style.color)
   const hl = assInlineColor(style.highlight)
   const highlight = style.highlight.toLowerCase() !== style.color.toLowerCase()
   chunks.forEach((c, i) => {
@@ -217,13 +222,20 @@ function captionEvents(track: CaptionTrack, w: number, h: number): string[] {
     const holdUntil = next ? Math.min(next.start, c.end + 0.6) : c.end + 0.6
     const shown = c.words.map((x) => displayWord(x.text, style))
     // The same line breaks as the preview, written out so libass does not wrap on its own.
-    const layout = layoutCaptionLines(shown, (t) => measure(t) * px, w * CAPTION_MAX_WIDTH / (style.popScale ? CAPTION_ACTIVE_SCALE : 1))
+    const measurePx = (t: string): number => measure(t) * px
+    const extraGap = (a: string, b: string): number => (style.popScale ? captionWordGap(a, b, measurePx, px, !!style.pill) : 0)
+    const layout = layoutCaptionLines(shown, measurePx, w * CAPTION_MAX_WIDTH, extraGap)
     const breaks = new Set<number>()
     let count = 0
     for (const l of layout.slice(0, -1)) breaks.add((count += l.length))
     const words = shown.map((t) => escapeAss(t))
-    const textOf = (color: (k: number) => string): string =>
-      words.map((_, k) => `${k === 0 ? '' : breaks.has(k) ? '\\N' : ' '}${color(k)}`).join('')
+    const textOf = (color: (k: number) => string): string => words.map((_, k) => {
+      if (k === 0) return color(k)
+      if (breaks.has(k)) return `\\N${color(k)}`
+      const gap = extraGap(shown[k - 1], shown[k])
+      const gapTag = gap > 0 ? `{\\fsp${gap.toFixed(2)}} {\\fsp0}` : ' '
+      return `${gapTag}${color(k)}`
+    }).join('')
 
     if (style.box) {
       const textW = Math.max(...layout.map((l) => measure(l.join(' ')) * px))
@@ -240,26 +252,49 @@ function captionEvents(track: CaptionTrack, w: number, h: number): string[] {
       const start = j === 0 ? c.start : wd.start
       const end = j + 1 < c.words.length ? c.words[j + 1].start : holdUntil
       if (end <= start) return
-      const scaleTag = style.popScale ? `\\fscx${Math.round(CAPTION_ACTIVE_SCALE * 100)}\\fscy${Math.round(CAPTION_ACTIVE_SCALE * 100)}` : ''
-      const scaleReset = style.popScale ? '\\fscx100\\fscy100' : ''
+      let lineIndex = 0
+      let lineStart = 0
+      for (let l = 0; l < layout.length; l++) {
+        if (j < lineStart + layout[l].length) { lineIndex = l; break }
+        lineStart += layout[l].length
+      }
+      const line = layout[lineIndex]
+      const wordInLine = j - lineStart
+      // Each word after the first is preceded by a space and its pop gap, as libass lays out the base line.
+      const advance = (word: string, k: number): number => measurePx(word) + (k ? measurePx(' ') + extraGap(line[k - 1], word) : 0)
+      const lineWidth = line.reduce((sum, word, k) => sum + advance(word, k), 0)
+      const before = line.slice(0, wordInLine + 1).reduce((sum, word, k) => sum + advance(word, k), 0) - measurePx(line[wordInLine])
+      const wordWidth = measurePx(shown[j])
+      const centerX = Math.round((w - lineWidth) / 2 + before + wordWidth / 2)
+      const blockH = layout.length * lineH
+      const top = pos === 'atas' ? marginV : pos === 'tengah' ? (h - blockH) / 2 : h - marginV - blockH
+      const centerY = Math.round(top + lineIndex * lineH + lineH / 2)
+      const activeText = words[j]
+      const startScale = style.popScale ? '\\fscx100\\fscy100' : ''
+      const transform = style.popScale ? `\\t(0,${CAPTION_POP_DURATION_MS},\\fscx${Math.round(CAPTION_ACTIVE_SCALE * 100)}\\fscy${Math.round(CAPTION_ACTIVE_SCALE * 100)})` : ''
       if (style.glowColor) {
-        // The glow is its own layer under the caption: a blurred outline of the active word only. Drawn in
-        // the same line it would also recolour the word's own outline, and a red word in a red halo is unreadable.
+        // The halo is isolated from the fixed-width base line, so it cannot move neighboring words.
         const glowPx = Math.max(2, Math.round(px * CAPTION_GLOW_OUTLINE_RATIO))
         const glowTag = `\\1a&HFF&\\3a&H30&\\4a&HFF&\\3c${assInlineColor(style.glowColor)}\\bord${glowPx}\\blur${Math.round(glowPx * CAPTION_GLOW_BLUR_RATIO)}`
         lines.push(
-          `Dialogue: 0,${assTime(start)},${assTime(end)},Cap,,0,0,0,,${textOf((k) =>
-            k === j ? `{${glowTag}${scaleTag}}${words[k]}{${scaleReset}}` : `{\\alpha&HFF&}${words[k]}`
-          )}`
+          `Dialogue: 0,${assTime(start)},${assTime(end)},Cap,,0,0,0,,{\\an5\\pos(${centerX},${centerY})${glowTag}${startScale}${transform}}${activeText}`
         )
       }
       const activeColor = style.pill ? assInlineColor('#000000') : hl
-      const pillTag = style.pill ? `\\bord${Math.max(2, Math.round(px * 0.12))}\\3c${assInlineColor(style.highlight)}` : ''
-      const pillReset = style.pill ? `\\bord${baseOutline(style, h)}\\3c${assInlineColor(style.outlineColor)}` : ''
+      if (style.pill) {
+        const boxW = Math.round(wordWidth + 2 * px * CAPTION_PILL_PAD_EM)
+        const boxH = Math.round(lineH)
+        const radius = Math.round(px * CAPTION_BOX_RADIUS)
+        const path = roundedRectPath(0, 0, boxW, boxH, radius)
+        // Centred on the word and popped with it, as the preview scales the capsule together with its word.
+        lines.push(`Dialogue: 0,${assTime(start)},${assTime(end)},CapPill,,0,0,0,,{\\an5\\pos(${centerX},${centerY})\\p1\\bord0\\shad0\\1c${assInlineColor(style.highlight)}${startScale}${transform}}${path}{\\p0}`)
+      }
+      // The whole line stays in place; only the active word is hidden here and drawn on top at full size.
+      const inactive = textOf((k) => (k === j ? `{\\alpha&HFF&}${words[k]}{\\r}` : words[k]))
+      lines.push(`Dialogue: 1,${assTime(start)},${assTime(end)},Cap,,0,0,0,,${inactive}`)
+      const activeTags = `\\an5\\pos(${centerX},${centerY})\\c${activeColor}${startScale}`
       lines.push(
-        `Dialogue: 1,${assTime(start)},${assTime(end)},Cap,,0,0,0,,${textOf((k) =>
-          k === j ? `{\\c${activeColor}${scaleTag}${pillTag}}${words[k]}{\\c${base}${scaleReset}${pillReset}}` : words[k]
-        )}`
+        `Dialogue: 2,${assTime(start)},${assTime(end)},Cap,,0,0,0,,{${activeTags}${transform}}${activeText}`
       )
     })
   })
@@ -276,6 +311,218 @@ function buildSrt(chunks: CaptionChunk[]): string {
       })
       .join('\n') + '\n'
   )
+}
+
+/** Joins overlapping clip segments in bounded blocks, sharing the boundary clip between neighboring blocks. */
+async function renderVideoBlocks(files: string[], segs: Segment[], opts: ExportOptions, tmp: string, signal: AbortSignal, progress: (fraction: number) => void): Promise<string> {
+  const blocks: string[] = []
+  const last = segs.length - 1
+  const boundaries: { start: number; end: number; trimStart: number; trimEnd: number }[] = []
+  for (let start = 0; start <= last; ) {
+    const end = Math.min(last, start + 19)
+    const trimStart = start ? segs[start - 1].overlap : 0
+    // A middle block stops right after the transition into its shared last clip; the next block starts there.
+    const lead = segs.slice(start, end).reduce((n, s) => n + s.own, 0)
+    const trimEnd = end === last ? lead + segs[end].own : lead + segs[end - 1].overlap
+    boundaries.push({ start, end, trimStart, trimEnd })
+    if (end === last) break
+    start = end
+  }
+  for (let bi = 0; bi < boundaries.length; bi++) {
+    const b = boundaries[bi]
+    const graph: string[] = []
+    for (let i = b.start; i <= b.end; i++) graph.push('-i', files[i])
+    const filters: string[] = []
+    let v = '[0:v]'
+    let offset = 0
+    for (let i = b.start; i < b.end; i++) {
+      offset += segs[i].own
+      const label = `[x${i - b.start}]`
+      filters.push(`${v}[${i - b.start + 1}:v]xfade=transition=${segs[i].transition}:duration=${segs[i].overlap.toFixed(6)}:offset=${offset.toFixed(6)}${label}`)
+      v = label
+    }
+    filters.push(`${v}trim=start=${b.trimStart.toFixed(6)}:end=${b.trimEnd.toFixed(6)},setpts=PTS-STARTPTS[vout]`)
+    const graphFile = `video-block-${bi}.txt`
+    writeFileSync(join(tmp, graphFile), filters.join(';\n'), 'utf8')
+    const out = `video-block-${bi}.mp4`
+    const args: string[] = []
+    for (let i = b.start; i <= b.end; i++) args.push('-i', files[i])
+    const encoder = opts.encoder === 'nvenc'
+      ? ['-c:v', 'h264_nvenc', '-preset', 'p5', '-tune', 'hq', '-rc', 'vbr', '-cq', opts.resolution === 2160 ? '20' : '19', '-b:v', '0']
+      : ['-c:v', 'libx264', '-preset', 'veryfast', '-crf', '17']
+    await runFfmpeg([
+      ...args, '-filter_complex_script', graphFile, '-map', '[vout]', '-an', ...encoder,
+      '-pix_fmt', 'yuv420p', '-r', String(opts.fps), '-t', Math.max(0.04, b.trimEnd - b.trimStart).toFixed(6), out
+    ], tmp, signal)
+    blocks.push(out)
+    progress((bi + 1) / boundaries.length)
+  }
+  if (blocks.length === 1) return blocks[0]
+  writeFileSync(join(tmp, 'video-list.txt'), blocks.map((f) => `file '${f}'`).join('\n') + '\n', 'utf8')
+  await runFfmpeg(['-f', 'concat', '-safe', '0', '-i', 'video-list.txt', '-c', 'copy', 'video-joined.mp4'], tmp, signal)
+  return 'video-joined.mp4'
+}
+
+let nvencCache: boolean | null = null
+let nvencCheck: Promise<boolean> | null = null
+
+export function nvencAvailable(): Promise<boolean> {
+  if (nvencCache != null) return Promise.resolve(nvencCache)
+  if (nvencCheck) return nvencCheck
+  nvencCheck = (async () => {
+    let tmp = ''
+    try {
+      const encoders = execFileSync(ffmpegPath(), ['-hide_banner', '-encoders'], { stdio: ['ignore', 'pipe', 'ignore'] }).toString()
+      if (!/\bh264_nvenc\b/.test(encoders)) return (nvencCache = false)
+      tmp = join(dataDir(), 'tmp', `nvenc-check-${Date.now()}`)
+      mkdirSync(tmp, { recursive: true })
+      // Tiny frames are rejected by NVENC even when the GPU and driver are available.
+      await runFfmpeg(['-f', 'lavfi', '-i', 'color=c=black:s=256x256:r=1:d=1', '-frames:v', '1', '-c:v', 'h264_nvenc', '-f', 'null', '-'], tmp, new AbortController().signal)
+      return (nvencCache = true)
+    } catch {
+      return (nvencCache = false)
+    } finally {
+      if (tmp) rmSync(tmp, { recursive: true, force: true })
+      nvencCheck = null
+    }
+  })()
+  return nvencCheck
+}
+
+/**
+ * Seconds each audio window is mixed ahead of its own start and then cut away, so the ducking compressor and
+ * the music fade carry over from the previous window instead of starting fresh at every boundary.
+ */
+const AUDIO_PREROLL_SEC = 3
+
+/** Mixes short timeline windows independently so long projects never open hundreds of audio inputs at once. */
+async function renderAudioMix(
+  bundle: ProjectBundle,
+  segs: Segment[],
+  total: number,
+  duck: boolean,
+  tmp: string,
+  signal: AbortSignal,
+  progress: (fraction: number) => void
+): Promise<string> {
+  const projectId = bundle.project.id
+  const editor = bundle.project.editor
+  const music = assetOf(bundle, editor.musicAssetId)
+  const sfx = (editor.sfx ?? []).filter((item) => item.durationMs > 0 && assetOf(bundle, item.assetId))
+  const windowSec = 30
+  const count = Math.max(1, Math.ceil(total / windowSec))
+  const outputs: string[] = []
+  for (let block = 0; block < count; block++) {
+    const from = block * windowSec
+    const length = Math.min(windowSec, total - from)
+    const to = from + length
+    const pre = Math.min(AUDIO_PREROLL_SEC, from)
+    const mixFrom = from - pre
+    // Delays in samples (48 kHz), so a sound split across two windows joins without a gap or overlap.
+    const delayTo = (at: number): string => {
+      const n = Math.max(0, Math.round((at - mixFrom) * 48000))
+      return `adelay=${n}S|${n}S`
+    }
+    const args: string[] = []
+    const graph: string[] = []
+    const voices: string[] = []
+    let index = 0
+    segs.forEach((seg, i) => {
+      const audio = assetOf(bundle, seg.clip.audioAssetId)
+      if (!audio) return
+      const span = voiceSpan(seg.clip, audio.durationMs ?? UNKNOWN_AUDIO_MS)
+      const voiceStart = seg.start + span.startMs / 1000
+      const voiceEnd = voiceStart + span.playMs / 1000
+      const start = Math.max(mixFrom, voiceStart)
+      const end = Math.min(to, voiceEnd)
+      if (end <= start) return
+      args.push('-i', assetAbsPath(projectId, audio.localPath))
+      const sourceStart = span.inMs / 1000 + start - voiceStart
+      const playLength = end - start
+      const clippedByVoiceWindow = end >= voiceEnd && span.playMs < span.lengthMs
+      const fade = clippedByVoiceWindow ? `,afade=t=out:st=${Math.max(0, playLength - 0.06).toFixed(3)}:d=${Math.min(0.06, playLength).toFixed(3)}` : ''
+      const db = (editor.voiceVolumeDb ?? 0) + (seg.clip.voiceGainDb ?? 0)
+      const gain = Math.abs(db) > 0.01 ? `,volume=${db.toFixed(2)}dB` : ''
+      graph.push(`[${index}:a]atrim=start=${sourceStart.toFixed(6)}:duration=${playLength.toFixed(6)},asetpts=PTS-STARTPTS${fade},aresample=48000,aformat=channel_layouts=stereo${gain},${delayTo(start)}[v${i}]`)
+      voices.push(`[v${i}]`)
+      index++
+    })
+    let voiceOut: string | null = null
+    if (voices.length === 1) voiceOut = voices[0]
+    else if (voices.length > 1) {
+      graph.push(`${voices.join('')}amix=inputs=${voices.length}:normalize=0:dropout_transition=0[voice]`)
+      voiceOut = '[voice]'
+    }
+    let musicOut: string | null = null
+    if (music) {
+      const span = musicSpan(editor, total)
+      const start = Math.max(mixFrom, span.startSec)
+      const end = Math.min(to, span.endSec)
+      if (end > start) {
+        args.push('-stream_loop', '-1', '-i', assetAbsPath(projectId, music.localPath))
+        const sourceStart = span.inSec + start - span.startSec
+        const elapsedAtEnd = end - span.startSec
+        const fadeStart = Math.max(0, span.endSec - span.startSec - 2)
+        const fade = end >= span.endSec && elapsedAtEnd > fadeStart ? `,afade=t=out:st=${Math.max(0, fadeStart - (start - span.startSec)).toFixed(3)}:d=${Math.min(2, elapsedAtEnd - fadeStart).toFixed(3)}` : ''
+        graph.push(`[${index}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=start=${sourceStart.toFixed(6)}:duration=${(end - start).toFixed(6)},asetpts=PTS-STARTPTS,volume=${editor.musicVolumeDb}dB${fade},${delayTo(start)}[mus]`)
+        musicOut = '[mus]'
+        index++
+      }
+    }
+    if (voiceOut && musicOut && duck) {
+      graph.push(`${voiceOut}asplit=2[v1][v2]`)
+      graph.push(`${musicOut}[v2]sidechaincompress=threshold=0.02:ratio=8:attack=20:release=500[duck]`)
+      graph.push('[v1][duck]amix=inputs=2:normalize=0:dropout_transition=0[vmix]')
+      voiceOut = '[vmix]'
+      musicOut = null
+    }
+    let mix: string | null = voiceOut
+    if (musicOut) {
+      if (mix) {
+        graph.push(`${mix}${musicOut}amix=inputs=2:normalize=0:dropout_transition=0[vmix]`)
+        mix = '[vmix]'
+      } else mix = musicOut
+    }
+    const effects: string[] = []
+    sfx.forEach((item, i) => {
+      const startAt = item.startMs / 1000
+      const endAt = startAt + item.durationMs / 1000
+      const start = Math.max(mixFrom, startAt)
+      const end = Math.min(to, endAt)
+      if (end <= start) return
+      const asset = assetOf(bundle, item.assetId)!
+      args.push('-i', assetAbsPath(projectId, asset.localPath))
+      const sourceStart = (item.inMs ?? 0) / 1000 + start - startAt
+      const db = item.volumeDb ?? 0
+      const gain = Math.abs(db) > 0.01 ? `,volume=${db.toFixed(2)}dB` : ''
+      graph.push(`[${index}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=start=${sourceStart.toFixed(6)}:duration=${(end - start).toFixed(6)},asetpts=PTS-STARTPTS${gain},${delayTo(start)}[s${i}]`)
+      effects.push(`[s${i}]`)
+      index++
+    })
+    if (effects.length) {
+      let effectMix = effects[0]
+      if (effects.length > 1) {
+        graph.push(`${effects.join('')}amix=inputs=${effects.length}:normalize=0:dropout_transition=0[smix]`)
+        effectMix = '[smix]'
+      }
+      if (mix) {
+        graph.push(`${mix}${effectMix}amix=inputs=2:normalize=0:dropout_transition=0[allmix]`)
+        mix = '[allmix]'
+      } else mix = effectMix
+    }
+    const output = `audio-${block}.wav`
+    graph.push(mix
+      ? `${mix}aresample=48000,apad,atrim=start=${pre.toFixed(6)}:end=${(pre + length).toFixed(6)},asetpts=PTS-STARTPTS,aformat=channel_layouts=stereo[aout]`
+      : `anullsrc=r=48000:cl=stereo,atrim=0:${length.toFixed(3)},aresample=48000[aout]`)
+    writeFileSync(join(tmp, `audio-${block}.txt`), graph.join(';\n'), 'utf8')
+    await runFfmpeg([...args, '-filter_complex_script', `audio-${block}.txt`, '-map', '[aout]', '-c:a', 'pcm_s16le', '-ar', '48000', '-ac', '2', output], tmp, signal)
+    outputs.push(output)
+    progress((block + 1) / count)
+  }
+  if (outputs.length === 1) return outputs[0]
+  writeFileSync(join(tmp, 'audio-list.txt'), outputs.map((f) => `file '${f}'`).join('\n') + '\n', 'utf8')
+  await runFfmpeg(['-f', 'concat', '-safe', '0', '-i', 'audio-list.txt', '-c', 'copy', 'audio-joined.wav'], tmp, signal)
+  return 'audio-joined.wav'
 }
 
 // ---------- timeline ----------
@@ -362,6 +609,22 @@ function assetOf(bundle: ProjectBundle, id: string | null): Asset | undefined {
   return id ? bundle.assets.find((a) => a.id === id) : undefined
 }
 
+function segmentCacheKey(bundle: ProjectBundle, seg: Segment, opts: ExportOptions, size: { w: number; h: number }): string {
+  const clip = seg.clip
+  const asset = assetOf(bundle, clip.motionType === 'video' ? clip.videoAssetId : clip.imageAssetId)
+  const path = asset ? assetAbsPath(bundle.project.id, asset.localPath) : ''
+  const file = path && existsSync(path) ? statSync(path) : null
+  return createHash('sha256').update(JSON.stringify({
+    clip,
+    segment: { start: seg.start, own: seg.own, overlap: seg.overlap, pad: seg.pad },
+    framing: bundle.project.editor.clipFraming?.[clip.id],
+    asset: asset && [asset.id, asset.localPath, asset.width, asset.height, file?.size, file?.mtimeMs],
+    aspect: bundle.project.aspectRatio,
+    size,
+    fps: opts.fps
+  })).digest('hex')
+}
+
 async function renderSegment(
   bundle: ProjectBundle,
   seg: Segment,
@@ -423,14 +686,34 @@ async function renderSegment(
 }
 
 async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOptions): Promise<string> {
+  if (opts.encoder === 'nvenc' && !(await nvencAvailable())) throw new Error('Encoder NVIDIA NVENC tidak tersedia. Pilih encoder CPU atau perbarui driver NVIDIA.')
   const bundle = getBundle(projectId)
   if (!bundle.clips.length) throw new Error('Proyek belum punya klip')
   const size = outputSize(bundle.project.aspectRatio, opts.resolution)
   const tmp = join(dataDir(), 'tmp', `export-${ctx.jobId}`)
+  const cacheDir = join(dataDir(), 'tmp', 'export-cache', projectId)
   mkdirSync(tmp, { recursive: true })
+  mkdirSync(cacheDir, { recursive: true })
   try {
     const segs = planSegments(bundle.clips, opts.fps)
     const total = segs.reduce((n, s) => n + s.own, 0)
+    const folder = opts.folder
+    mkdirSync(folder, { recursive: true })
+    const finalMbPerSec = opts.resolution === 720 ? 0.55 : opts.resolution === 1080 ? 0.95 : 3.8
+    const tempMbPerSec = opts.resolution === 720 ? 1.4 : opts.resolution === 1080 ? 3.2 : 12
+    const neededFinal = total * finalMbPerSec * 1_000_000 * 1.2
+    const neededTemp = total * tempMbPerSec * 1_000_000 * 1.35 + 64 * 1024 * 1024
+    const freeAt = (path: string): number => {
+      const fs = statfsSync(path)
+      return Number(fs.bavail) * Number(fs.bsize)
+    }
+    const outputFree = freeAt(folder)
+    const tempFree = freeAt(tmp)
+    if (outputFree < neededFinal) throw new Error(`Ruang disk output tidak cukup. Video sekitar ${Math.ceil(neededFinal / 1_000_000)} MB, kosongkan ruang atau pilih folder lain.`)
+    const sameDrive = parse(folder).root.toLowerCase() === parse(tmp).root.toLowerCase()
+    if (tempFree < neededTemp || (sameDrive && tempFree < neededTemp + neededFinal)) {
+      throw new Error(`Ruang disk sementara tidak cukup. Render dan file akhir perlu sekitar ${Math.ceil((neededTemp + (sameDrive ? neededFinal : 0)) / 1_000_000)} MB. Kosongkan ruang atau pilih folder output di disk lain.`)
+    }
 
     // 1. one silent video segment per clip, two at a time
     const files: string[] = new Array(segs.length)
@@ -439,12 +722,28 @@ async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOption
     const worker = async (): Promise<void> => {
       while (next < segs.length) {
         const i = next++
-        files[i] = await renderSegment(bundle, segs[i], i, opts, size, tmp, ctx.signal)
+        const output = `seg_${String(i).padStart(3, '0')}.mp4`
+        const cached = join(cacheDir, `${segmentCacheKey(bundle, segs[i], opts, size)}.mp4`)
+        if (existsSync(cached)) copyFileSync(cached, join(tmp, output))
+        else {
+          const rendered = await renderSegment(bundle, segs[i], i, opts, size, tmp, ctx.signal)
+          const partial = `${cached}.${ctx.jobId}.partial`
+          copyFileSync(join(tmp, rendered), partial)
+          try {
+            renameSync(partial, cached)
+          } catch (error) {
+            if (!existsSync(cached)) throw error
+            rmSync(partial, { force: true })
+          }
+        }
+        files[i] = output
         done++
         ctx.progress(0.03 + 0.6 * (done / segs.length), `Merender klip ${done} dari ${segs.length}`)
       }
     }
-    await Promise.all([worker(), worker()])
+    const segmentResults = await Promise.allSettled([worker(), worker()])
+    const segmentFailure = segmentResults.find((result): result is PromiseRejectedResult => result.status === 'rejected')
+    if (segmentFailure) throw segmentFailure.reason
 
     // 2. captions
     const style = resolveCaption(bundle.project.editor)
@@ -480,17 +779,19 @@ async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOption
       for (const f of readdirSync(fontsDir()).filter((x) => x.endsWith('.ttf'))) copyFileSync(join(fontsDir(), f), join(tmp, 'fonts', f))
     }
 
-    // 3. one ffmpeg pass: transitions + captions + audio mix
-    const args: string[] = []
-    files.forEach((f) => args.push('-i', f))
+    let videoFile: string
+    try {
+      videoFile = await renderVideoBlocks(files, segs, opts, tmp, ctx.signal, (f) => ctx.progress(0.64 + 0.1 * f, `Menggabungkan blok video ${Math.round(f * 100)}%`))
+    } catch (error) {
+      if (opts.encoder !== 'nvenc' || ctx.signal.aborted) throw error
+      ctx.progress(0.64, 'NVENC gagal; mengulang blok video dengan CPU')
+      // The fallback rewrites the deterministic block names with CPU output.
+      videoFile = await renderVideoBlocks(files, segs, { ...opts, encoder: 'cpu' }, tmp, ctx.signal, (f) => ctx.progress(0.64 + 0.1 * f, `Render CPU ${Math.round(f * 100)}%`))
+    }
+    const audioFile = await renderAudioMix(bundle, segs, total, opts.duckMusic, tmp, ctx.signal, (f) => ctx.progress(0.74 + 0.1 * f, `Mencampur audio ${Math.round(f * 100)}%`))
+    const args = ['-i', videoFile, '-i', audioFile]
     const graph: string[] = []
     let v = '[0:v]'
-    segs.slice(0, -1).forEach((s, i) => {
-      const label = `[x${i}]`
-      graph.push(`${v}[${i + 1}:v]xfade=transition=${s.transition}:duration=${s.overlap.toFixed(6)}:offset=${segs[i + 1].start.toFixed(6)}${label}`)
-      v = label
-    })
-    // Logos and watermarks sit on the picture, under captions and overlay text.
     images.forEach(({ o, asset }, k) => {
       args.push('-i', assetAbsPath(projectId, asset.localPath))
       const iw = Math.max(2, Math.round((o.width * size.w) / 2) * 2)
@@ -499,104 +800,20 @@ async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOption
       const x = Math.round(o.x * size.w - ax * iw)
       const y = Math.round(o.y * size.h - ay * ih)
       const end = overlayEnd(o, total)
-      graph.push(`[${files.length + k}:v]format=rgba,scale=${iw}:${ih},colorchannelmixer=aa=${o.opacity.toFixed(2)}[ov${k}]`)
+      graph.push(`[${k + 2}:v]format=rgba,scale=${iw}:${ih},colorchannelmixer=aa=${o.opacity.toFixed(2)}[ov${k}]`)
       graph.push(`${v}[ov${k}]overlay=x=${x}:y=${y}:enable='between(t,${o.start.toFixed(3)},${end.toFixed(3)})'[vo${k}]`)
       v = `[vo${k}]`
     })
     graph.push(`${v}${useAss ? 'ass=captions.ass:fontsdir=fonts,' : ''}format=yuv420p[vout]`)
-
-    let inputIndex = files.length + images.length
-    const voices: string[] = []
-    segs.forEach((s, i) => {
-      const audio = assetOf(bundle, s.clip.audioAssetId)
-      if (!audio) return
-      // The voice as trimmed on the timeline, placed in its clip, and cut (with a short fade) at the clip's end.
-      const span = voiceSpan(s.clip, audio.durationMs ?? UNKNOWN_AUDIO_MS)
-      if (span.playMs <= 0) return
-      args.push('-i', assetAbsPath(projectId, audio.localPath))
-      const ms = Math.round(s.start * 1000 + span.startMs)
-      const cut = span.playMs < span.lengthMs ? `,afade=t=out:st=${Math.max(0, span.playMs / 1000 - 0.06).toFixed(3)}:d=0.06` : ''
-      // Narration volume: for all clips plus this clip's own adjustment.
-      const db = (bundle.project.editor.voiceVolumeDb ?? 0) + (s.clip.voiceGainDb ?? 0)
-      const gain = Math.abs(db) > 0.01 ? `volume=${db.toFixed(2)}dB,` : ''
-      graph.push(
-        `[${inputIndex}:a]atrim=start=${(span.inMs / 1000).toFixed(3)}:end=${((span.inMs + span.playMs) / 1000).toFixed(3)},asetpts=PTS-STARTPTS${cut},aresample=48000,aformat=channel_layouts=stereo,${gain}adelay=${ms}|${ms}[a${i}]`
-      )
-      voices.push(`[a${i}]`)
-      inputIndex++
-    })
-    const music = assetOf(bundle, bundle.project.editor.musicAssetId)
-    let aout: string | null = null
-    if (voices.length) {
-      graph.push(`${voices.join('')}amix=inputs=${voices.length}:normalize=0:dropout_transition=0[voice]`)
-      aout = '[voice]'
-    }
-    if (music) {
-      // The music's stretch of the timeline: it starts `inSec` into the song, loops if needed and fades out.
-      const span = musicSpan(bundle.project.editor, total)
-      const len = span.endSec - span.startSec
-      const delay = Math.round(span.startSec * 1000)
-      args.push('-stream_loop', '-1', '-i', assetAbsPath(projectId, music.localPath))
-      graph.push(
-        `[${inputIndex}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=start=${span.inSec.toFixed(3)},asetpts=PTS-STARTPTS,atrim=0:${len.toFixed(3)},volume=${bundle.project.editor.musicVolumeDb}dB,afade=t=out:st=${Math.max(0, len - 2).toFixed(3)}:d=${Math.min(2, len).toFixed(3)}${delay ? `,adelay=${delay}|${delay}` : ''}[mus]`
-      )
-      inputIndex++
-      if (aout) {
-        if (opts.duckMusic) {
-          graph.push('[voice]asplit=2[v1][v2]')
-          graph.push('[mus][v2]sidechaincompress=threshold=0.02:ratio=8:attack=20:release=500[duck]')
-          graph.push('[v1][duck]amix=inputs=2:normalize=0:dropout_transition=0[mix]')
-        } else {
-          graph.push('[voice][mus]amix=inputs=2:normalize=0:dropout_transition=0[mix]')
-        }
-        aout = '[mix]'
-      } else aout = '[mus]'
-    }
-    const sfxList = (bundle.project.editor.sfx ?? []).filter((s) => s.durationMs > 0 && assetOf(bundle, s.assetId))
-    const sfxOutputs: string[] = []
-    sfxList.forEach((s, i) => {
-      const asset = assetOf(bundle, s.assetId)!
-      args.push('-i', assetAbsPath(projectId, asset.localPath))
-      const ms = Math.max(0, Math.round(s.startMs))
-      const inSec = Math.max(0, (s.inMs ?? 0) / 1000)
-      const durSec = s.durationMs / 1000
-      const db = s.volumeDb ?? 0
-      const gain = Math.abs(db) > 0.01 ? `,volume=${db.toFixed(2)}dB` : ''
-      graph.push(
-        `[${inputIndex}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=start=${inSec.toFixed(3)}:end=${(inSec + durSec).toFixed(3)},asetpts=PTS-STARTPTS${gain},adelay=${ms}|${ms}[sfx${i}]`
-      )
-      sfxOutputs.push(`[sfx${i}]`)
-      inputIndex++
-    })
-    if (sfxOutputs.length) {
-      const sfxMix = sfxOutputs.length === 1 ? sfxOutputs[0] : '[sfxmix]'
-      if (sfxOutputs.length > 1) {
-        graph.push(`${sfxOutputs.join('')}amix=inputs=${sfxOutputs.length}:normalize=0:dropout_transition=0[sfxmix]`)
-      }
-      if (aout) {
-        graph.push(`${aout}${sfxMix}amix=inputs=2:normalize=0:dropout_transition=0[finalmix]`)
-        aout = '[finalmix]'
-      } else {
-        aout = sfxMix
-      }
-    }
-    if (aout) {
-      // loudnorm works at 192 kHz internally, so resample back to 48 kHz afterwards.
-      graph.push(`${aout}${opts.normalizeAudio ? 'loudnorm=I=-14:LRA=11:TP=-1.5,' : ''}aresample=48000,apad,atrim=0:${total.toFixed(3)}[aout]`)
-    } else {
-      graph.push(`anullsrc=r=48000:cl=stereo,atrim=0:${total.toFixed(3)}[aout]`)
-    }
+    graph.push(`[1:a]${opts.normalizeAudio ? 'loudnorm=I=-14:LRA=11:TP=-1.5,' : ''}aresample=48000,apad,atrim=0:${total.toFixed(3)}[aout]`)
     writeFileSync(join(tmp, 'graph.txt'), graph.join(';\n'), 'utf8')
 
-    const folder = opts.folder
-    mkdirSync(folder, { recursive: true })
     const base = (opts.fileName.trim() || 'video').replace(/[<>:"/\\|?*]+/g, '-').replace(/\.mp4$/i, '')
     let outPath = join(folder, `${base}.mp4`)
     for (let n = 2; existsSync(outPath); n++) outPath = join(folder, `${base}-${n}.mp4`)
 
-    ctx.progress(0.64, 'Menggabungkan klip, suara, dan caption')
-    await runFfmpeg(
-      [
+    ctx.progress(0.84, 'Menyusun video dan audio akhir')
+    const finalArgs = (gpu: boolean): string[] => [
         ...args,
         '-filter_complex_script',
         'graph.txt',
@@ -605,11 +822,9 @@ async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOption
         '-map',
         '[aout]',
         '-c:v',
-        'libx264',
-        '-preset',
-        'medium',
-        '-crf',
-        opts.resolution === 2160 ? '20' : '19',
+        ...(gpu
+          ? ['h264_nvenc', '-preset', 'p5', '-tune', 'hq', '-rc', 'vbr', '-cq', opts.resolution === 2160 ? '20' : '19', '-b:v', '0']
+          : ['libx264', '-preset', 'medium', '-crf', opts.resolution === 2160 ? '20' : '19']),
         '-r',
         String(opts.fps),
         '-c:a',
@@ -623,17 +838,31 @@ async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOption
         '-t',
         total.toFixed(3),
         outPath
-      ],
+      ]
+    const runFinal = (gpu: boolean): Promise<void> => runFfmpeg(
+      finalArgs(gpu),
       tmp,
       ctx.signal,
       total,
-      (f) => ctx.progress(0.64 + 0.34 * f, 'Menggabungkan klip, suara, dan caption')
+      (f) => ctx.progress(0.84 + 0.15 * f, gpu ? 'Menyusun video akhir dengan NVENC' : 'Menyusun video dan audio akhir')
     )
+    try {
+      await runFinal(opts.encoder === 'nvenc')
+    } catch (error) {
+      if (opts.encoder !== 'nvenc' || ctx.signal.aborted) throw error
+      ctx.progress(0.84, 'NVENC gagal; melanjutkan encode akhir dengan CPU')
+      await runFinal(false)
+    }
     if (opts.writeSrt && chunks.length) writeFileSync(outPath.replace(/\.mp4$/i, '.srt'), buildSrt(chunks), 'utf8')
+    rmSync(cacheDir, { recursive: true, force: true })
     return outPath
   } finally {
     rmSync(tmp, { recursive: true, force: true })
   }
+}
+
+export function clearExportCache(projectId: string): void {
+  rmSync(join(dataDir(), 'tmp', 'export-cache', projectId), { recursive: true, force: true })
 }
 
 export function startExport(projectId: string, opts: ExportOptions): Job {

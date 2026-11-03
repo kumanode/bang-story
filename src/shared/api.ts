@@ -7,6 +7,7 @@ import type {
   CharacterPatchEvent,
   ClipPatchEvent,
   CreditEstimate,
+  StoryProgressEvent,
   WhisperStatus,
   WordTiming,
   ExportOptions,
@@ -58,7 +59,7 @@ export interface StudioApi {
     /** Voices scenes in one continuous take and cuts it per scene: those without a voice, or all of them. */
     narration(projectId: string, mode: 'missing' | 'all'): Promise<Job>
     /** Re-times caption words of voiced scenes against the audio with the local Whisper model. */
-    syncCaptions(projectId: string, mode?: 'stale' | 'all'): Promise<Job>
+    syncCaptions(projectId: string, mode?: 'stale' | 'all' | 'force'): Promise<Job>
     cancel(jobId: string): Promise<void>
     /** Credits for one image, or one video of about `seconds`, with this model. Null without a working key. */
     estimate(kind: 'image' | 'video', modelId: string, aspect: AspectRatio, seconds?: number, resolution?: string | null): Promise<CreditEstimate | null>
@@ -104,6 +105,7 @@ export interface StudioApi {
   }
   exporter: {
     start(projectId: string, options: ExportOptions): Promise<Job>
+    nvencAvailable(): Promise<boolean>
     defaultFolder(): Promise<string>
     pickFolder(): Promise<string | null>
     reveal(path: string): Promise<void>
@@ -121,6 +123,7 @@ export interface StudioApi {
     openFolder(): Promise<void>
   }
   on: {
+    storyProgress(cb: (progress: StoryProgressEvent) => void): () => void
     whisper(cb: (status: WhisperStatus) => void): () => void
     job(cb: (job: Job) => void): () => void
     clip(cb: (e: ClipPatchEvent) => void): () => void
@@ -134,5 +137,6 @@ export const EVENTS = {
   clip: 'event:clip',
   character: 'event:character',
   asset: 'event:asset',
-  whisper: 'event:whisper'
+  whisper: 'event:whisper',
+  storyProgress: 'event:story-progress'
 } as const

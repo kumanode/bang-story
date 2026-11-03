@@ -10,7 +10,7 @@ import { assetAbsPath, binPath } from './paths'
 import { probeDurationMs } from './services/audio'
 import { createProject, getBundle, insertAsset, patchClip, replaceStory, saveSnapshot, touchProject } from './repo'
 import { recordCheck, setSecret } from './secrets'
-import type { ApiProvider } from '@shared/types'
+import type { ApiProvider, ExportOptions } from '@shared/types'
 
 /**
  * Real speech for the demo clips (Windows' built-in English voice) with estimated caption timings, so
@@ -197,6 +197,7 @@ export function attachDevHarness(win: BrowserWindow): void {
   let plan: {
     main?: 'seed' | 'export' | 'key' | 'overlays' | 'speech' | 'videos'
     exportTo?: string
+    encoder?: ExportOptions['encoder']
     /** For main "export": an existing project instead of the seeded demo. */
     projectId?: string
     /** For main "key": store a fake key for this provider and mark its last check as passed or failed. */
@@ -242,7 +243,8 @@ export function attachDevHarness(win: BrowserWindow): void {
             writeSrt: true,
             normalizeAudio: true,
             duckMusic: true,
-            folder: step.exportTo ?? app.getPath('temp')
+            folder: step.exportTo ?? app.getPath('temp'),
+            encoder: step.encoder ?? 'cpu'
           })
         }
         if (step.js) await win.webContents.executeJavaScript(step.js, true)

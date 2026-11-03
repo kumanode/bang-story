@@ -192,6 +192,7 @@ export function Timeline({
 }) {
   const scroller = useRef<HTMLDivElement>(null)
   const [width, setWidth] = useState(1000)
+  const [scrollLeft, setScrollLeft] = useState(0)
   const [zoom, setZoom] = useState(1)
   const seek = usePlayback((s) => s.seek)
   const project = useProject((s) => s.project)
@@ -333,12 +334,25 @@ export function Timeline({
   useLayoutEffect(() => {
     const el = scroller.current
     if (!el) return
-    const ro = new ResizeObserver(() => setWidth(el.clientWidth))
+    let lastWidth = el.clientWidth
+    setWidth(lastWidth)
+    const ro = new ResizeObserver(() => {
+      const next = el.clientWidth
+      if (Math.abs(next - lastWidth) <= 1) return
+      lastWidth = next
+      setWidth(next)
+    })
     ro.observe(el)
     return () => ro.disconnect()
   }, [])
 
-  const pps = frozenPps ?? Math.max(2, ((width - ORIGIN - 16) / Math.max(total, 1)) * zoom)
+  const pps = frozenPps ?? Math.max(2, (Math.floor(width - ORIGIN - (zoom === 1 ? 28 : 16)) / Math.max(total, 1)) * zoom)
+  const visibleFrom = Math.max(0, (scrollLeft - 900 - ORIGIN) / pps)
+  const visibleTo = (scrollLeft + width + 900 - ORIGIN) / pps
+  const visibleItems = items.filter((it) => it.end >= visibleFrom && it.start <= visibleTo)
+  const visibleTransitions = items.slice(1).map((it, i) => ({ it, before: items[i] })).filter(({ it }) => it.start >= visibleFrom && it.start <= visibleTo)
+  const visibleChunks = chunks.filter((c) => c.end >= visibleFrom && c.start <= visibleTo)
+  const visibleSfx = (editor.sfx ?? []).filter((s) => s.startMs / 1000 + s.durationMs / 1000 >= visibleFrom && s.startMs / 1000 <= visibleTo)
   const step = TICK_STEPS.find((s) => s * pps >= 70) ?? 120
   const ticks: number[] = []
   for (let s = 0; s <= total + 0.001; s += step) ticks.push(s)
@@ -613,6 +627,8 @@ export function Timeline({
       <div
         ref={scroller}
         className="scroll-thin relative min-h-0 flex-1 overflow-auto pt-1.5"
+        style={{ scrollbarGutter: 'stable' }}
+        onScroll={(e) => setScrollLeft(e.currentTarget.scrollLeft)}
         onPointerDown={(e) => {
           if (e.clientX - e.currentTarget.getBoundingClientRect().left < LABEL_W) return
           e.currentTarget.setPointerCapture(e.pointerId)
@@ -620,7 +636,12 @@ export function Timeline({
         }}
         onPointerMove={(e) => e.buttons === 1 && e.currentTarget.hasPointerCapture(e.pointerId) && seekFrom(e)}
       >
-        <div className="relative" style={{ width: ORIGIN + total * pps + 16 }}>
+        <div className="relative" style={{ width: Math.max(
+          ORIGIN + total * pps + 16,
+          ...(editor.sfx ?? []).map((s) => ORIGIN + s.startMs / 1000 * pps + Math.max(36, s.durationMs / 1000 * pps)),
+          ...(editor.overlays ?? []).map((o) => ORIGIN + (o.end ?? total) * pps),
+          ...items.map((it) => ORIGIN + it.end * pps)
+        ) }}>
           <Row label="" height={22}>
             {ticks.map((s) => (
               <span key={s} className="absolute top-0 h-[21px] border-l border-line-2 pl-1 font-mono text-[11px] text-muted" style={{ left: s * pps }}>
@@ -630,7 +651,7 @@ export function Timeline({
           </Row>
 
           <Row label="Klip" icon={<ImageIcon className="size-4" />} height={64} trackId="clips">
-            {items.map((it) => {
+            {visibleItems.map((it) => {
               const spec = clipSpec(it)
               const videoLeft = it.clip.motionType === 'video' && it.video?.durationMs ? it.video.durationMs - (it.clip.mediaInMs ?? 0) : null
               const held = videoLeft != null && it.clip.durationMs > videoLeft + 50 ? (it.clip.durationMs - videoLeft) / 1000 : 0
@@ -690,14 +711,14 @@ export function Timeline({
               )
             })}
             {/* One button on each joint: the transition belongs to the clip before it. */}
-            {items.slice(1).map((it, i) => (
+            {visibleTransitions.map(({ it, before }) => (
               <TransitionButton
-                key={`tr-${items[i].clip.id}`}
-                clip={items[i].clip}
+                key={`tr-${before.clip.id}`}
+                clip={before.clip}
                 next={it.clip}
                 x={it.start * pps}
-                selected={is('transition', items[i].clip.id)}
-                onPick={() => pick({ kind: 'transition', id: items[i].clip.id })}
+                selected={is('transition', before.clip.id)}
+                onPick={() => pick({ kind: 'transition', id: before.clip.id })}
               />
             ))}
           </Row>
@@ -729,7 +750,8 @@ export function Timeline({
               </button>
             }
           >
-            {chunks.map((c, i) => {
+            {visibleChunks.map((c) => {
+              const i = chunks.indexOf(c)
               const selected = !!c.source && selection?.kind === 'caption' && selection.key === c.source.key && selection.from === c.source.from
               const live = capDrag && c.source && capDrag.key === c.source.key && capDrag.from === c.source.from ? capDrag : null
               const start = live ? live.start : c.start
@@ -781,7 +803,7 @@ export function Timeline({
               </button>
             }
           >
-            {items.map((it) => {
+            {visibleItems.map((it) => {
               if (!it.audio) return null
               const span = voiceSpan(it.clip, it.audio.durationMs ?? UNKNOWN_AUDIO_MS)
               if (span.playMs <= 0) return null
@@ -926,7 +948,7 @@ export function Timeline({
               </div>
             }
           >
-            {(project?.editor.sfx ?? []).map((s) => (
+            {visibleSfx.map((s) => (
               <div
                 key={s.id}
                 role="button"
@@ -987,7 +1009,7 @@ export function Timeline({
                 ) : undefined
               }
             >
-              {lane.map(({ o, start, end }) => {
+              {lane.filter(({ start, end }) => end >= visibleFrom && start <= visibleTo).map(({ o, start, end }) => {
                 const label = o.kind === 'text' ? o.text.split('\n')[0] || 'Teks' : (assets[o.assetId]?.prompt ?? 'Gambar')
                 const spec = overlaySpec(o, start, end)
                 return (

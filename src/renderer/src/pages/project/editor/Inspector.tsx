@@ -17,7 +17,7 @@ import { voiceSpan } from '@shared/timeline'
 import type { Asset, CameraCustomFraming, Clip, WordTiming } from '@shared/types'
 import { Select } from '../../../components/Select'
 import { AutoTextarea } from '../../../components/AutoTextarea'
-import { Button, Segmented, Switch, cx, inputCls } from '../../../components/ui'
+import { Button, Segmented, Switch, confirmDialog, cx, inputCls } from '../../../components/ui'
 import { clipNumber, errorText, secLabel, timecode } from '../../../lib/format'
 import { useApp } from '../../../store/app'
 import { useNarration } from '../../../lib/useNarration'
@@ -675,17 +675,26 @@ function CaptionTiming() {
   if (!project) return null
   const voiced = clips.filter((c) => c.audioAssetId && assets[c.audioAssetId])
   const estimated = voiced.filter((c) => captionNeedsSync(assets[c.audioAssetId!])).length
+  const manuallyEdited = voiced.filter((c) => assets[c.audioAssetId!]?.provider !== 'elevenlabs' && assets[c.audioAssetId!]?.meta.editedWords === true).length
   const canResync = voiced.some((c) => assets[c.audioAssetId!]?.provider !== 'elevenlabs')
   const job = jobFor(jobs, 'align', {})
   const running = isRunning(job)
 
-  const sync = async (mode: 'stale' | 'all' = 'stale'): Promise<void> => {
+  const sync = async (mode: 'stale' | 'all' | 'force' = 'stale'): Promise<void> => {
     try {
       await flush()
       await window.api.generate.syncCaptions(project.id, mode)
     } catch (e) {
       toast('error', errorText(e))
     }
+  }
+  const forceSync = async (): Promise<void> => {
+    const ok = await confirmDialog({
+      title: 'Timpa edit caption manual?',
+      body: `Whisper akan mengganti teks pada ${manuallyEdited} klip yang pernah kamu edit.`,
+      confirm: 'Timpa dan sinkronkan'
+    })
+    if (ok) await sync('force')
   }
 
   return (
@@ -699,21 +708,33 @@ function CaptionTiming() {
       ) : estimated === 0 ? (
         <>
           <p className="text-[13px] text-ok-ink">Semua caption mengikuti waktu suara aslinya.</p>
+          {manuallyEdited > 0 && <p className="text-[13px] text-ink-2">{manuallyEdited} klip pernah diedit manual dan akan dilewati saat sinkron ulang.</p>}
           {whisper && canResync && (
-            <Button size="sm" variant="ghost" className="self-start" icon={<AudioLines className="size-4" />} onClick={() => void sync('all')}>
-              Sinkronkan ulang
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" variant="ghost" className="self-start" icon={<AudioLines className="size-4" />} onClick={() => void sync('all')}>
+                Sinkronkan ulang
+              </Button>
+              {manuallyEdited > 0 && <Button size="sm" variant="ghost" className="self-start" onClick={() => void forceSync()}>Timpa juga edit manual</Button>}
+            </div>
           )}
         </>
       ) : (
         <>
           <p className="text-[13px] leading-relaxed text-ink-2">
             {estimated} klip belum disinkronkan dengan suaranya, jadi caption bisa mendahului atau tertinggal.
+            {manuallyEdited > 0 ? ` ${manuallyEdited} klip dengan edit caption manual akan dilewati.` : ''}
           </p>
           {whisper ? (
-            <Button size="sm" className="self-start" icon={<AudioLines className="size-4" />} onClick={() => void sync()}>
-              Sinkronkan dengan Whisper
-            </Button>
+            <div className="flex flex-wrap gap-2">
+              <Button size="sm" className="self-start" icon={<AudioLines className="size-4" />} onClick={() => void sync()}>
+                Sinkronkan dengan Whisper
+              </Button>
+              {manuallyEdited > 0 && (
+                <Button size="sm" variant="ghost" className="self-start" onClick={() => void forceSync()}>
+                  Timpa juga {manuallyEdited} edit manual
+                </Button>
+              )}
+            </div>
           ) : (
             <p className="text-[13px] text-ink-2">
               Unduh model Whisper Small di{' '}

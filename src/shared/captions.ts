@@ -221,6 +221,9 @@ export function captionFontFile(style: { fontInfo: CaptionFont; weight: number }
 /** Corner radius of the caption box, as a share of the font size. */
 export const CAPTION_BOX_RADIUS = 0.4
 export const CAPTION_ACTIVE_SCALE = 1.15
+export const CAPTION_POP_GAP_RATIO = (CAPTION_ACTIVE_SCALE - 1) / 2
+export const CAPTION_PILL_PAD_EM = 0.25
+export const CAPTION_POP_DURATION_MS = 80
 export const CAPTION_GLOW_INNER_RADIUS = 0.35
 export const CAPTION_GLOW_OUTER_RADIUS = 0.7
 export const CAPTION_GLOW_OUTLINE_RATIO = 0.18
@@ -229,17 +232,33 @@ export const CAPTION_GLOW_BLUR_RATIO = 0.8
 /** Captions may use this share of the frame width, as libass does with 8% side margins. */
 export const CAPTION_MAX_WIDTH = 0.84
 
+export function captionPopScaleAt(elapsedSec: number): number {
+  const t = Math.max(0, Math.min(1, (elapsedSec * 1000) / CAPTION_POP_DURATION_MS))
+  const eased = 1 - (1 - t) * (1 - t)
+  return 1 + (CAPTION_ACTIVE_SCALE - 1) * eased
+}
+
 /**
  * Breaks a caption into lines. The preview (canvas widths) and the export (font-file widths) both call it,
  * so their lines match and the rounded box can be drawn around known lines. Short captions stay on one
  * line; longer ones get two balanced lines with the top one no shorter, like libass's smart wrapping.
  */
-export function layoutCaptionLines(words: string[], measure: (text: string) => number, maxWidth: number): string[][] {
-  if (words.length < 2 || measure(words.join(' ')) <= maxWidth) return [words]
+export function captionWordGap(left: string, right: string, measure: (text: string) => number, em: number, pill = false): number {
+  return Math.max(measure(left), measure(right)) * CAPTION_POP_GAP_RATIO + (pill ? em * CAPTION_PILL_PAD_EM : 0)
+}
+
+export function layoutCaptionLines(
+  words: string[],
+  measure: (text: string) => number,
+  maxWidth: number,
+  gap?: (left: string, right: string) => number
+): string[][] {
+  const lineWidth = (line: string[]): number => line.reduce((sum, word, i) => sum + measure(word) + (i ? measure(' ') + (gap?.(line[i - 1], word) ?? 0) : 0), 0)
+  if (words.length < 2 || lineWidth(words) <= maxWidth) return [words]
   let best: { at: number; score: number } | null = null
   for (let at = 1; at < words.length; at++) {
-    const top = measure(words.slice(0, at).join(' '))
-    const bottom = measure(words.slice(at).join(' '))
+    const top = lineWidth(words.slice(0, at))
+    const bottom = lineWidth(words.slice(at))
     if (top > maxWidth || bottom > maxWidth) continue
     const score = Math.max(top, bottom) + (bottom > top ? 0.01 * maxWidth : 0)
     if (!best || score < best.score) best = { at, score }
@@ -249,7 +268,7 @@ export function layoutCaptionLines(words: string[], measure: (text: string) => n
   const lines: string[][] = [[]]
   for (const w of words) {
     const line = lines[lines.length - 1]
-    if (line.length && measure([...line, w].join(' ')) > maxWidth) lines.push([w])
+    if (line.length && lineWidth([...line, w]) > maxWidth) lines.push([w])
     else line.push(w)
   }
   return lines

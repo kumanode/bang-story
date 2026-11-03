@@ -4,9 +4,11 @@ import {
   CAPTION_BOX_PAD,
   CAPTION_BOX_RADIUS,
   CAPTION_MAX_WIDTH,
-  CAPTION_ACTIVE_SCALE,
   CAPTION_GLOW_INNER_RADIUS,
   CAPTION_GLOW_OUTER_RADIUS,
+  CAPTION_PILL_PAD_EM,
+  captionPopScaleAt,
+  captionWordGap,
   POPPINS_CELL,
   captionScaleOf,
   captionAt,
@@ -129,7 +131,9 @@ function Caption({ chunks, t, editor, width, height }: { chunks: CaptionChunk[];
   const family = `'${style.fontInfo.family}', sans-serif`
   const words = hit.chunk.words.map((w) => displayWord(w.text, style))
   const font = `${style.weight} ${size}px ${family}`
-  const lines = layoutCaptionLines(words, (s) => textWidth(font, s), width * CAPTION_MAX_WIDTH / (style.popScale ? CAPTION_ACTIVE_SCALE : 1))
+  const measure = (s: string): number => textWidth(font, s)
+  const gap = (a: string, b: string): number => (style.popScale ? captionWordGap(a, b, measure, size, !!style.pill) : 0)
+  const lines = layoutCaptionLines(words, measure, width * CAPTION_MAX_WIDTH, gap)
   let index = 0
   return (
     <div
@@ -153,35 +157,48 @@ function Caption({ chunks, t, editor, width, height }: { chunks: CaptionChunk[];
         <div key={l}>
           {line.map((word, k) => {
             const i = index++
+            const isActive = highlight && i === hit.word
+            const isPill = style.pill && isActive
+            const wordStyle: CSSProperties = {}
+            if (isActive) {
+              wordStyle.color = isPill ? '#000000' : style.highlight
+              if (style.popScale) {
+                wordStyle.transform = `scale(${captionPopScaleAt(t - hit.chunk.words[i].start)})`
+                wordStyle.display = 'inline-block'
+              }
+              if (isPill) {
+                // The capsule is drawn behind the word without padding it, so the line keeps its width (as in the export).
+                wordStyle.display = 'inline-block'
+                wordStyle.position = 'relative'
+                wordStyle.zIndex = 0
+                wordStyle.WebkitTextStroke = '0px transparent'
+              } else if (style.glowColor) {
+                // The word keeps its dark outline; the halo sits behind it, as the separate ASS glow layer does.
+                wordStyle.textShadow = `0 0 ${Math.round(size * CAPTION_GLOW_INNER_RADIUS)}px ${style.glowColor}, 0 0 ${Math.round(size * CAPTION_GLOW_OUTER_RADIUS)}px ${style.glowColor}`
+              }
+            }
             return (
-              (() => {
-                const isActive = highlight && i === hit.word
-                const isPill = style.pill && isActive
-                const wordStyle: CSSProperties = {}
-                if (isActive) {
-                  wordStyle.color = isPill ? '#000000' : style.highlight
-                  if (style.popScale) {
-                    wordStyle.transform = `scale(${CAPTION_ACTIVE_SCALE})`
-                    wordStyle.display = 'inline-block'
-                  }
-                  if (isPill) {
-                    wordStyle.backgroundColor = style.highlight
-                    wordStyle.borderRadius = `${Math.round(size * 0.22)}px`
-                    wordStyle.padding = `0 ${Math.round(size * 0.25)}px`
-                    wordStyle.WebkitTextStroke = '0px transparent'
-                  } else if (style.glowColor) {
-                    // The word keeps its dark outline; the halo sits behind it, as the separate ASS glow layer does.
-                    wordStyle.textShadow = `0 0 ${Math.round(size * CAPTION_GLOW_INNER_RADIUS)}px ${style.glowColor}, 0 0 ${Math.round(size * CAPTION_GLOW_OUTER_RADIUS)}px ${style.glowColor}`
-                  }
-                }
-                return (
-                  <span key={k} style={isActive ? wordStyle : undefined} className={isPill ? 'inline-block my-0.5' : undefined}>
-                    {word}
-                    {k < line.length - 1 ? ' ' : ''}
-                  </span>
-                )
-              })()
+              <span key={k} style={isActive ? wordStyle : undefined}>
+                {isPill && (
+                  <span
+                    aria-hidden="true"
+                    className="absolute inset-y-0"
+                    style={{
+                      left: -size * CAPTION_PILL_PAD_EM,
+                      right: -size * CAPTION_PILL_PAD_EM,
+                      zIndex: -1,
+                      backgroundColor: style.highlight,
+                      borderRadius: size * CAPTION_BOX_RADIUS
+                    }}
+                  />
+                )}
+                {word}
+              </span>
             )
+          }).flatMap((node, k) => {
+            if (k >= line.length - 1) return [node]
+            const extra = style.popScale ? gap(line[k], line[k + 1]) : 0
+            return [node, ' ', <span key={`gap-${l}-${k}`} aria-hidden="true" className="inline-block" style={{ width: extra }} />]
           })}
         </div>
       ))}

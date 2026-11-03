@@ -467,6 +467,9 @@ export function StoryboardStep() {
   const [credits, setCredits] = useState<number | null>(null)
   const [videoCredits, setVideoCredits] = useState<number | null>(null)
   const [planning, setPlanning] = useState(false)
+  const [planMessage, setPlanMessage] = useState('')
+  const [visibleCount, setVisibleCount] = useState(48)
+  const loadMoreRef = useRef<HTMLDivElement>(null)
   const lastNarration = useRef<string | null>(null)
 
   // A failed narration take is reported once, when it happens.
@@ -479,6 +482,27 @@ export function StoryboardStep() {
 
   const isFlow2Image = FLOW2API_IMAGE_MODELS.some((m) => m.id === project?.imageModel)
   const isFlow2Video = FLOW2API_VIDEO_MODELS.some((m) => m.id === project?.videoModel)
+
+  useEffect(() => {
+    setVisibleCount(48)
+  }, [project?.id])
+  useEffect(() => {
+    const el = loadMoreRef.current
+    if (!el || visibleCount >= clips.length) return
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) setVisibleCount((n) => Math.min(clips.length, n + 48))
+    }, { rootMargin: '1000px' })
+    observer.observe(el)
+    return () => observer.disconnect()
+  }, [visibleCount, clips.length])
+  useEffect(() => {
+    const selectedIndex = clips.findIndex((clip) => clip.id === selectedClipId)
+    if (selectedIndex >= visibleCount) setVisibleCount(Math.min(clips.length, selectedIndex + 1))
+  }, [selectedClipId, clips, visibleCount])
+
+  useEffect(() => window.api.on.storyProgress((progress) => {
+    if (progress.projectId === project?.id) setPlanMessage(progress.message)
+  }), [project?.id])
 
   useEffect(() => {
     if (project && !isFlow2Image)
@@ -533,6 +557,20 @@ export function StoryboardStep() {
     }
   }
 
+  const makeImages = async (): Promise<void> => {
+    if (!project) return
+    if (project.durationSec >= 600) {
+      const estimated = credits == null ? 'Biaya belum bisa diperkirakan untuk model ini.' : `Perkiraan biaya gambar: ${Math.round(credits * stats.needImg * 10) / 10} kredit Higgsfield.`
+      const ok = await confirmDialog({
+        title: `Buat ${stats.needImg} gambar adegan?`,
+        body: `Video ${Math.round(project.durationSec / 60)} menit ini memiliki sekitar ${clips.length} adegan. ${estimated} Proses panjang dan menggunakan kredit untuk setiap gambar.`,
+        confirm: `Buat ${stats.needImg} gambar`
+      })
+      if (!ok) return
+    }
+    await bulk(() => window.api.generate.missingImages(project.id))
+  }
+
   const narration = useNarration()
   // Videos are made last: every clip has its picture, and the voice is final so each video matches its clip length.
   const readyForVideo =
@@ -551,6 +589,7 @@ export function StoryboardStep() {
       body:
         `Setiap gambar klip dianimasikan dengan ${videoModelName}, panjangnya mengikuti suara narasi klip itu.` +
         (!isFlow2Video && videoCredits != null ? ` Perkiraan biaya ${Math.round(videoCredits * 10) / 10} kredit Higgsfield.` : '') +
+        (project!.durationSec >= 600 ? ` Video ini memiliki ${clips.length} adegan dan prosesnya bisa lama.` : '') +
         ' Klip yang sudah punya video tidak dibuat ulang.',
       confirm: `Buat ${n} video`
     })
@@ -561,6 +600,7 @@ export function StoryboardStep() {
   const stale = clips.filter(needsVisual).length
   const planVisuals = async (): Promise<void> => {
     setPlanning(true)
+    setPlanMessage('Menyusun rencana visual…')
     try {
       await flush()
       load(await window.api.story.visuals(project.id, 'missing'))
@@ -569,6 +609,7 @@ export function StoryboardStep() {
       toast('error', errorText(e))
     } finally {
       setPlanning(false)
+      setPlanMessage('')
     }
   }
 
@@ -636,7 +677,7 @@ export function StoryboardStep() {
           className="border-[1.5px] border-ink font-semibold"
           icon={<ImageIcon className="size-[17px]" />}
           disabled={!stats.needImg}
-          onClick={() => void bulk(() => window.api.generate.missingImages(project.id))}
+          onClick={() => void makeImages()}
         >
           Generate {stats.needImg} gambar
           {credits != null && stats.needImg > 0 && (
@@ -683,12 +724,12 @@ export function StoryboardStep() {
                 {stale} adegan belum punya visual dari naskah terbaru. Buat visualnya dulu supaya gambar sesuai dengan alur cerita.
               </span>
               <Button size="sm" variant="secondary" loading={planning} onClick={() => void planVisuals()}>
-                Buat visual
+                {planning ? planMessage || 'Menyusun visual…' : 'Buat visual'}
               </Button>
             </div>
           )}
           <div className={cx('grid gap-3.5', project.aspectRatio === '9:16' ? 'grid-cols-4' : 'grid-cols-3')}>
-            {clips.map((c, i) => {
+            {clips.slice(0, visibleCount).map((c, i) => {
               const on = c.id === sel?.id
               const imageJob = jobFor(jobs, 'image', { clipId: c.id })
               const ttsRunning = isRunning(jobFor(jobs, 'tts', { clipId: c.id }))
@@ -752,6 +793,7 @@ export function StoryboardStep() {
               )
             })}
           </div>
+          {visibleCount < clips.length && <div ref={loadMoreRef} aria-hidden="true" className="h-8" />}
         </section>
         {sel && <ClipPanel key={sel.id} clip={sel} index={selIndex} total={clips.length} />}
       </div>

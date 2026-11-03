@@ -15,7 +15,7 @@ import type {
   VoiceOption,
   WordTiming
 } from '@shared/types'
-import { startExport } from './exporter'
+import { clearExportCache, nvencAvailable, startExport } from './exporter'
 import {
   estimateCredits,
   forgetEstimates,
@@ -91,7 +91,11 @@ export function registerIpc(): void {
   handle('projects:create', (input: NewProjectInput) => getBundle(createProject(input).id))
   handle('projects:get', (id: string) => getBundle(id))
   handle('projects:save', (snap: ProjectSnapshot) => ({ updatedAt: saveSnapshot(snap) }))
-  handle('projects:remove', (id: string) => removeProject(id))
+  handle('projects:remove', (id: string) => {
+    const removed = removeProject(id)
+    clearExportCache(id)
+    return removed
+  })
   handle('projects:duplicate', (id: string) => duplicateProject(id))
 
   handle('story:script', (projectId: string) => generateScript(projectId))
@@ -112,7 +116,7 @@ export function registerIpc(): void {
   handle('generate:missingVideos', (projectId: string) => generateMissingVideos(projectId))
   handle('generate:missingTts', (projectId: string) => generateMissingTts(projectId))
   handle('generate:narration', (projectId: string, mode: 'missing' | 'all') => generateNarration(projectId, mode === 'all' ? 'all' : 'missing'))
-  handle('generate:syncCaptions', (projectId: string, mode?: 'stale' | 'all') => syncCaptions(projectId, mode === 'all' ? 'all' : 'stale'))
+  handle('generate:syncCaptions', (projectId: string, mode?: 'stale' | 'all' | 'force') => syncCaptions(projectId, mode === 'force' ? 'force' : mode === 'all' ? 'all' : 'stale'))
 
   handle('whisper:status', () => whisperStatus())
   // The download runs in the background and reports through whisper events.
@@ -378,6 +382,7 @@ export function registerIpc(): void {
   })
 
   handle('export:start', (projectId: string, opts: ExportOptions) => startExport(projectId, opts))
+  handle('export:nvencAvailable', () => nvencAvailable())
   handle('export:defaultFolder', () => defaultExportFolder())
   handle('export:pickFolder', async () => {
     const win = BrowserWindow.getFocusedWindow()

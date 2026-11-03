@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import { AlertTriangle, ArrowRight, Copy, FolderOpen, MoreHorizontal, Plus, RefreshCw, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
-import { DURATIONS, LANGUAGES, llmName } from '@shared/models'
+import { DURATIONS, LANGUAGES, clipCountFor, llmName } from '@shared/models'
 import { getStyle } from '@shared/styles'
 import type { ApiProvider, AppSettings, AspectRatio, KeyStatus, ProjectStatus, ProjectSummary, TtsProvider } from '@shared/types'
 import { Logo } from '../components/Logo'
@@ -52,6 +52,7 @@ export function Home() {
   const [query, setQuery] = useState('')
   const [synopsis, setSynopsis] = useState('')
   const [durationSec, setDurationSec] = useState(60)
+  const [longImageCredit, setLongImageCredit] = useState<number | null>(null)
   const [language, setLanguage] = useState('id')
   const [aspectRatio, setAspectRatio] = useState<AspectRatio>('16:9')
   const [styleId, setStyleId] = useState('stickman')
@@ -74,6 +75,18 @@ export function Home() {
       setLanguage(s.defaultLanguage)
     })
   }, [])
+
+  useEffect(() => {
+    if (durationSec < 900 || !appSettings || appSettings.defaultVisualProvider === 'flow2api') {
+      setLongImageCredit(null)
+      return
+    }
+    let live = true
+    void window.api.generate.estimate('image', appSettings.imageModel, aspectRatio).then((estimate) => {
+      if (live) setLongImageCredit(estimate?.credits ?? null)
+    })
+    return () => { live = false }
+  }, [durationSec, aspectRatio, appSettings])
 
   // Start on a narrator service that has a working key.
   useEffect(() => {
@@ -243,6 +256,11 @@ export function Home() {
                 onChange={setDurationSec}
                 options={DURATIONS.map((d) => ({ value: d.sec, label: d.label }))}
               />
+              {durationSec >= 900 && (
+                <span className="text-xs text-muted">
+                  ±{clipCountFor(durationSec)} adegan{longImageCredit != null ? ` · ≈${Math.round(longImageCredit * clipCountFor(durationSec))} kredit gambar` : ''}
+                </span>
+              )}
               <Select
                 variant="pill"
                 label="Bahasa"

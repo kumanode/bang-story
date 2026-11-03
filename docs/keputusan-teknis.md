@@ -97,11 +97,20 @@ mengubah narasi seluruh adegan menjadi suara karakter tanpa indikasi bahwa ia be
 menandai dialog/narasi yang dibacakan karakter; kosong berarti narator. ID suara diikat ke `ttsProvider` untuk
 mencegah provider menerima ID yang tidak dikenal.
 
-### Caption aktif memakai ukuran dan outline bersama
-Rasio pop-scale dan glow ditetapkan di `shared/captions.ts` agar pemenggalan baris, pratinjau, dan ASS memakai
-angka yang sama. Ekspor pill masih meniru kapsul dengan outline glyph, bukan background rounded CSS; pop-scale
-ASS mengubah lebar glyph saat kata aktif. Perbedaan kecil ini diterima supaya caption tetap bisa dibakar dalam
-satu pass ASS. Outline pada kata nonaktif selalu direset ke ukuran dasar yang sama dengan style caption.
+### Caption aktif memakai tata letak yang terkunci
+Aturan jarak pop, padding kapsul, radius, dan durasi animasi berada di `shared/captions.ts` agar pratinjau dan
+ekspor memakai nilai yang sama. Spasi di pratinjau menjadi node tersendiri di antara span kata; spasi di dalam
+`inline-block` dengan `white-space: nowrap` dapat dibuang browser.
+
+Kata aktif di ekspor digambar sebagai event ASS tersendiri di posisi tengah kata. Teks dasar tetap menempati lebar
+normal, sehingga perubahan skala kata aktif tidak menata ulang atau menggeser satu baris. Di baris dasar kata aktif
+hanya dibuat transparan (`\alpha&HFF&` lalu `\r`), bukan dihapus: tanpa teksnya, baris dasar kosong dan hanya kata
+aktif yang tampil. Kapsul digambar sebagai rounded rectangle ASS (`\p1`) di layer bawah, berpusat di kata dan ikut
+membesar bersamanya, memakai ukuran dan padding yang sama dengan pratinjau. Di pratinjau kapsul adalah elemen
+`absolute` di belakang kata, bukan padding, supaya lebar baris tidak berubah setiap kata berganti. Pop masuk
+dianimasikan selama 80 ms dari skala dasar ke 115%; hitungan pratinjau bergantung pada waktu playhead, sehingga
+seek dan scrub menghasilkan posisi yang sama.
+
 Glow (Merah Darah, Bisikan Arwah, Api Ritual) adalah event ASS terpisah di layer 0: hanya outline kata aktif yang
 di-blur, teksnya transparan. Kalau glow ditulis di baris caption yang sama, outline gelap kata aktif ikut berubah
 warna glow dan kata merah di dalam pendaran merah tidak terbaca. Pratinjau menirunya dengan `text-shadow` di
@@ -111,3 +120,31 @@ belakang outline gelap.
 CSS memakai RGB, sedangkan sebagian proses FFmpeg memakai YUV. Brightness FFmpeg memakai LUT RGB multiplikatif
 agar mendekati `brightness()` CSS, dan urutan sepia/hue disamakan. Konversi ruang warna tetap dapat menghasilkan
 perbedaan kecil, terutama pada gradasi kuat.
+
+### Cerita panjang dipecah menjadi kelompok
+Durasi 15–30 menit memakai target sekitar 8 detik per adegan, dengan batas 230 adegan. Naskah di atas 60 adegan
+dibuat dari kerangka babak dan kelompok maksimal 30 adegan; rencana visual dibuat per kelompok 20 adegan. Progres
+setiap kelompok dikirim ke UI. Hasil kelompok naskah yang selesai disimpan sementara di memori proses untuk
+mencoba ulang kelompok yang gagal selama aplikasi tetap terbuka. Visual yang sudah diterapkan ke proyek tersimpan
+per kelompok dan tidak dibuat ulang pada mode adegan yang belum lengkap.
+
+### Render ekspor bertahap dan dapat dilanjutkan
+Ekspor membuat segmen per klip, menggabungkannya ke blok video 20 klip dengan overlap transisi di batas blok,
+mencampur audio per jendela 30 detik, lalu menggabungkan hasil antara sebelum pass MP4 final. Encoder NVENC
+tersedia hanya setelah tes encode singkat berhasil; kegagalan NVENC pada render blok atau final mengulang tahap
+tersebut dengan CPU. Berkas antara segmen disimpan di cache proyek berdasarkan isi klip, aset, dan opsi render,
+lalu dibersihkan setelah ekspor sukses atau proyek dihapus. Pemeriksaan ruang kosong mencakup output dan
+perkiraan berkas kerja sementara.
+
+Blok tengah berhenti tepat setelah transisi ke klip terakhirnya (`own` klip-klip sebelumnya + `overlap` transisi
+itu), dan blok berikutnya mulai dari klip yang sama setelah `overlap` tersebut. Kalau blok tengah ikut memuat
+seluruh klip bersama itu, klip tampil dua kali dan video tertinggal dari audio di setiap batas blok. Proyek demo
+hanya 4 klip (satu blok), jadi uji ekspor blok memakai proyek dengan lebih dari 20 klip.
+
+Tiap jendela audio dicampur mulai 3 detik lebih awal lalu bagian itu dibuang, sehingga kompresor ducking dan fade
+musik melanjutkan keadaan jendela sebelumnya. Delay memakai satuan sampel (`adelay=…S`) agar suara yang terbelah dua
+jendela tersambung tanpa celah.
+
+### Sinkron Whisper melindungi edit kata manual
+Klip dengan `meta.editedWords` dilewati saat sinkron caption biasa. UI menunjukkan jumlah klip yang dilindungi;
+aksi paksa meminta konfirmasi dan menghapus penanda edit manual sebelum menulis kata hasil sinkron.

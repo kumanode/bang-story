@@ -375,6 +375,11 @@ export interface WhisperStatus {
   error: string | null
 }
 
+export interface StoryProgressEvent {
+  projectId: string
+  message: string
+}
+
 export interface ModelOption {
   id: string
   name: string
@@ -403,6 +408,8 @@ export interface ExportOptions {
   fileName: string
   resolution: 720 | 1080 | 2160
   fps: 30 | 60
+  /** Optional so older saved export payloads continue to use CPU encoding. */
+  encoder?: 'cpu' | 'nvenc'
   burnCaptions: boolean
   writeSrt: boolean
   normalizeAudio: boolean
