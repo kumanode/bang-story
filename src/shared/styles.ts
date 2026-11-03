@@ -62,18 +62,6 @@ export const VISUAL_STYLES: VisualStyle[] = [
     characterHint: 'a simple hand-drawn marker doodle character'
   },
   {
-    id: 'collage',
-    name: 'Kolase kertas',
-    category: '2d',
-    niche: 'Dokumenter, jurnalisme',
-    swatch: '#E9D8BA',
-    ink: '#1F1D1A',
-    prompt:
-      'Paper cut-out collage, layered textured paper, vintage photo cutouts, halftone print textures, torn edges, soft shadows between paper layers, editorial documentary style. ' +
-      NO_TEXT,
-    characterHint: 'a paper cut-out collage figure with textured paper layers'
-  },
-  {
     id: 'watercolor',
     name: 'Buku cerita cat air',
     category: '2d',
@@ -98,18 +86,6 @@ export const VISUAL_STYLES: VisualStyle[] = [
     characterHint: 'an anime character with clean cel shading'
   },
   {
-    id: 'noir',
-    name: 'Komik noir',
-    category: '2d',
-    niche: 'Horor, true crime',
-    swatch: '#2F3240',
-    ink: '#FAF7F2',
-    prompt:
-      'Dark graphic-novel comic panel, heavy black ink shadows, high contrast, muted palette with a single accent color, dramatic angles, halftone texture, suspenseful mood. ' +
-      NO_TEXT,
-    characterHint: 'a graphic-novel character drawn with heavy ink shadows'
-  },
-  {
     id: 'pixel',
     name: 'Pixel art',
     category: '2d',
@@ -118,30 +94,6 @@ export const VISUAL_STYLES: VisualStyle[] = [
     ink: '#1F1D1A',
     prompt: 'Detailed 16-bit pixel art scene, crisp pixels, limited retro palette, video game aesthetic, no blur. ' + NO_TEXT,
     characterHint: 'a 16-bit pixel art character sprite'
-  },
-  {
-    id: 'cyberpunk',
-    name: 'Cyberpunk neon',
-    category: '2d',
-    niche: 'Sci-fi, masa depan, teknologi',
-    swatch: '#1A102F',
-    ink: '#00F0FF',
-    prompt:
-      'Cyberpunk anime illustration still, glowing magenta and cyan neon lights, futuristic cityscape backdrop with rain reflections, high-tech aesthetic, high contrast, stylized cel shading, cinematic composition. ' +
-      NO_TEXT,
-    characterHint: 'a cyberpunk character with futuristic streetwear and subtle glowing cyberware'
-  },
-  {
-    id: 'retrocomic',
-    name: 'Komik retro pop-art',
-    category: '2d',
-    niche: 'Super-hero, komedi, aksi',
-    swatch: '#F4E04D',
-    ink: '#1F1D1A',
-    prompt:
-      'Vintage 1980s retro comic book panel, bold graphic black ink linework, vibrant pop-art colors, visible Ben-Day halftone dots, dynamic composition, vintage newsprint paper texture. ' +
-      NO_TEXT,
-    characterHint: 'a retro comic book character with bold black ink outlines and halftone shading'
   },
   {
     id: 'ghibli',
@@ -178,6 +130,54 @@ export const VISUAL_STYLES: VisualStyle[] = [
       'Detailed antique woodcut engraving print, fine cross-hatched black ink linework, vintage Renaissance etching, textured aged parchment paper background, dramatic chiaroscuro contrast, historical intellectual aesthetic. ' +
       NO_TEXT,
     characterHint: 'a classical figure rendered in vintage cross-hatched woodcut engraving style'
+  },
+  {
+    id: 'horror2d',
+    name: 'Horor 2D sinematik',
+    category: '2d',
+    niche: 'Horor, misteri, cerita seram',
+    swatch: '#1E1B22',
+    ink: '#D94B4B',
+    prompt:
+      'Cinematic 2D horror illustration, painterly digital art, deep shadows and desaturated cold palette with a single sickly accent color (red or green), dramatic low-key lighting, fog and dust in the air, unsettling composition with negative space, subtle film grain, eerie suspenseful mood. ' +
+      NO_TEXT,
+    characterHint: 'a 2D painterly horror character with a tense expression, lit by harsh low-key light'
+  },
+  {
+    id: 'webcomic',
+    name: 'Webcomic barat',
+    category: '2d',
+    niche: 'Komedi, drama remaja, slice of life',
+    swatch: '#FFB4A2',
+    ink: '#1F1D1A',
+    prompt:
+      'Western webcomic style 2D illustration, clean confident digital line art, flat colors with simple cel shading, expressive exaggerated faces and poses, bright friendly palette, simple readable backgrounds, modern webcomic panel look. ' +
+      NO_TEXT,
+    characterHint: 'an expressive western webcomic character with clean line art and flat colors'
+  },
+  {
+    id: 'animehorror',
+    name: 'Anime horor Jepang',
+    category: '2d',
+    niche: 'Cerita seram Jepang, urban legend',
+    swatch: '#2A2626',
+    ink: '#E5E0D8',
+    prompt:
+      'Dark Japanese horror anime film still, detailed ink linework with eerie cross-hatching, muted desaturated palette with deep blacks and a faint crimson accent, unsettling distorted perspective, empty quiet Japanese settings (old houses, shrines, school hallways, rainy streets), dim flickering light, creeping dread atmosphere. ' +
+      NO_TEXT,
+    characterHint: 'a Japanese horror anime character with pale skin, hollow shadowed eyes, drawn with fine eerie ink lines'
+  },
+  {
+    id: 'nusantara',
+    name: 'Ilustrasi Nusantara',
+    category: '2d',
+    niche: 'Cerita rakyat, legenda, sejarah Indonesia',
+    swatch: '#8B4A2B',
+    ink: '#F3D9A4',
+    prompt:
+      'Traditional Indonesian folklore illustration, inspired by wayang kulit shadow puppet silhouettes and batik motifs, ornate carved decorative patterns, earthy palette of sogan brown, deep indigo, gold and cream, elegant stylized figures in Javanese and Balinese traditional attire, layered decorative backgrounds with tropical nature and temples, rich cultural storybook mood. ' +
+      NO_TEXT,
+    characterHint: 'a stylized Indonesian folklore figure in traditional attire with wayang-inspired ornate details and batik patterns'
   },
   {
     id: 'animation3d',
@@ -249,18 +249,6 @@ export const VISUAL_STYLES: VisualStyle[] = [
       'Photorealistic cinematic film still, dramatic natural lighting, shallow depth of field, anamorphic lens look, rich color grading, subtle 35mm film grain. ' +
       NO_TEXT,
     characterHint: 'a photorealistic person, cinematic lighting'
-  },
-  {
-    id: 'documentary',
-    name: 'Foto dokumenter',
-    category: 'realistis',
-    niche: 'Fakta, berita, alam',
-    swatch: '#8A9A7B',
-    ink: '#FAF7F2',
-    prompt:
-      'Realistic documentary photograph, natural light, authentic details, candid composition, high detail, true-to-life colors. ' +
-      NO_TEXT,
-    characterHint: 'a realistic documentary portrait of a person'
   },
   {
     id: 'archival',
