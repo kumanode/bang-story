@@ -85,3 +85,29 @@ startup (`warmUpEncryption`) mencegah kunci API tidak terbaca setelah aplikasi d
 ### YouTube embed diberi Referer berisi ID aplikasi
 Halaman dari `file://` tidak mengirim Referer, dan YouTube menolak embed tanpa identitas (Error 153). Header
 ditambahkan hanya untuk `https://www.youtube.com/embed/*`.
+
+### Hasil job AI di-rebase ke riwayat undo
+Undo menyimpan edit pengguna, sedangkan gambar/video/suara yang selesai dibuat di latar bukan edit yang bisa
+dibatalkan. Patch hasil job dan aset barunya dimasukkan ke semua snapshot undo/redo agar undo edit lama tidak
+menghapus hasil AI. Penggantian media lokal lewat event main mengikuti aturan yang sama.
+
+### Pembicara disimpan terpisah dari pemeran yang terlihat
+`characterIds` dibutuhkan untuk prompt visual dan berarti “tampil di adegan”. Memakai field itu untuk suara
+mengubah narasi seluruh adegan menjadi suara karakter tanpa indikasi bahwa ia berbicara. `speakerId` kini
+menandai dialog/narasi yang dibacakan karakter; kosong berarti narator. ID suara diikat ke `ttsProvider` untuk
+mencegah provider menerima ID yang tidak dikenal.
+
+### Caption aktif memakai ukuran dan outline bersama
+Rasio pop-scale dan glow ditetapkan di `shared/captions.ts` agar pemenggalan baris, pratinjau, dan ASS memakai
+angka yang sama. Ekspor pill masih meniru kapsul dengan outline glyph, bukan background rounded CSS; pop-scale
+ASS mengubah lebar glyph saat kata aktif. Perbedaan kecil ini diterima supaya caption tetap bisa dibakar dalam
+satu pass ASS. Outline pada kata nonaktif selalu direset ke ukuran dasar yang sama dengan style caption.
+Glow (Merah Darah, Bisikan Arwah, Api Ritual) adalah event ASS terpisah di layer 0: hanya outline kata aktif yang
+di-blur, teksnya transparan. Kalau glow ditulis di baris caption yang sama, outline gelap kata aktif ikut berubah
+warna glow dan kata merah di dalam pendaran merah tidak terbaca. Pratinjau menirunya dengan `text-shadow` di
+belakang outline gelap.
+
+### Filter warna tetap memiliki selisih ruang warna
+CSS memakai RGB, sedangkan sebagian proses FFmpeg memakai YUV. Brightness FFmpeg memakai LUT RGB multiplikatif
+agar mendekati `brightness()` CSS, dan urutan sepia/hue disamakan. Konversi ruang warna tetap dapat menghasilkan
+perbedaan kecil, terutama pada gradasi kuat.

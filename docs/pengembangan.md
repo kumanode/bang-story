@@ -152,6 +152,8 @@ Yang ikut dipaketkan (lihat `electron-builder.yml`): `out/`, FFmpeg (di luar asa
 `licenses/FFmpeg-LICENSE.txt`. Ikon aplikasi dan installer diambil otomatis dari `build/icon.ico` (folder
 `buildResources`). Kalau logo berubah, buat ulang `icon.ico` (16–256 px) dan `icon.png` (1024 px) dari logo yang baru.
 
+Sebelum merilis installer yang menyertakan SFX bawaan, lengkapi sumber dan lisensinya di `resources/licenses/SFX-PROVENANCE-REQUIRED.txt`.
+
 Installer hanya untuk Windows dan belum ditandatangani (*code signing*), jadi Windows SmartScreen menampilkan
 peringatan saat pertama kali dijalankan. Installer macOS (`.dmg`) hanya bisa dibuat di Mac, dan butuh akun Apple
 Developer supaya tidak diblokir Gatekeeper. Selain itu, Whisper versi macOS juga belum ada. Lihat

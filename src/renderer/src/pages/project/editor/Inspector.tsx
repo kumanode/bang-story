@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react'
-import { AudioLines, Check, Clapperboard, Copy, ExternalLink, Film, Layers, Mic, Move, Music, Play, Sparkles, Type, Volume2, X } from 'lucide-react'
+import { AudioLines, Check, Clapperboard, Copy, ExternalLink, Film, FolderOpen, Layers, Mic, Move, Music, Play, Sparkles, Type, Volume2, X } from 'lucide-react'
 import {
   CAPTION_FONTS,
   CAPTION_POSITIONS,
@@ -11,9 +11,10 @@ import {
   resolveCaption
 } from '@shared/captions'
 import { CAMERA_PRESETS, MOTION_STRENGTHS } from '@shared/motion'
+import { FILTERS } from '@shared/filters'
 import { geminiVoiceName } from '@shared/models'
 import { voiceSpan } from '@shared/timeline'
-import type { Asset, Clip, WordTiming } from '@shared/types'
+import type { Asset, CameraCustomFraming, Clip, WordTiming } from '@shared/types'
 import { Select } from '../../../components/Select'
 import { AutoTextarea } from '../../../components/AutoTextarea'
 import { Button, Segmented, Switch, cx, inputCls } from '../../../components/ui'
@@ -26,11 +27,12 @@ import { OverlayPanel } from './OverlayPanel'
 import { TransitionPanel } from './TransitionPanel'
 
 /** 'transisi' has no button on the rail; it opens from the round buttons between clips on the timeline. */
-export type InspectorTab = 'klip' | 'suara' | 'caption' | 'overlay' | 'musik' | 'transisi'
+export type InspectorTab = 'klip' | 'suara' | 'sfx' | 'caption' | 'overlay' | 'musik' | 'transisi'
 
 export const INSPECTOR_TABS: { id: InspectorTab; label: string; icon: typeof Move }[] = [
   { id: 'klip', label: 'Klip', icon: Move },
   { id: 'suara', label: 'Suara', icon: Mic },
+  { id: 'sfx', label: 'Efek', icon: AudioLines },
   { id: 'caption', label: 'Caption', icon: Type },
   { id: 'overlay', label: 'Overlay', icon: Layers },
   { id: 'musik', label: 'Musik', icon: Music }
@@ -61,8 +63,14 @@ const VIDEO_CAMERA_OPTIONS = [
   ...CAMERA_PRESETS.filter((p) => p.id !== 'static').map((p) => ({ value: p.id, label: p.label }))
 ]
 
+const historyGestureHandlers = {
+  onPointerDown: () => useProject.getState().beginHistoryGesture(),
+  onPointerUp: () => useProject.getState().endHistoryGesture(),
+  onPointerCancel: () => useProject.getState().endHistoryGesture()
+}
+
 function ClipTab({ clip, index }: { clip: Clip; index: number }) {
-  const { assets, jobs, updateClip, flush } = useProject()
+  const { project, characters, assets, jobs, updateClip, updateClips, updateEditor, flush } = useProject()
   const { toast } = useApp()
   const image = clip.imageAssetId ? assets[clip.imageAssetId] : null
   const video = clip.videoAssetId ? assets[clip.videoAssetId] : null
@@ -83,9 +91,67 @@ function ClipTab({ clip, index }: { clip: Clip; index: number }) {
     }
   }
 
+  const customFraming = project?.editor.clipFraming?.[clip.id] ?? {
+    start: { x: -0.5, y: 0.3, zoom: 1.05 },
+    end: { x: 0.5, y: -0.3, zoom: 1.2 }
+  }
+
+  const updateCustomFraming = (patch: Partial<CameraCustomFraming['start']>, target: 'start' | 'end') => {
+    const current = project?.editor.clipFraming?.[clip.id] ?? {
+      start: { x: -0.5, y: 0.3, zoom: 1.05 },
+      end: { x: 0.5, y: -0.3, zoom: 1.2 }
+    }
+    const next = {
+      ...current,
+      [target]: { ...current[target], ...patch }
+    }
+    updateEditor({
+      clipFraming: {
+        ...(project?.editor.clipFraming ?? {}),
+        [clip.id]: next
+      }
+    })
+    audition()
+  }
+
   return (
     <>
       <ClipHeader clip={clip} index={index} />
+      <div className="flex items-center justify-between border-b border-line bg-sand-2/40 px-[18px] py-2">
+        <span className="text-xs font-medium text-ink-2">Aset gambar atau video</span>
+        <Button
+          size="sm"
+          variant="secondary"
+          icon={<FolderOpen className="size-3.5" />}
+          onClick={async () => {
+            try {
+              const res = await window.api.assets.replaceClipMedia(project!.id, clip.id)
+              if (res) {
+                toast('info', `Media klip berhasil diganti: ${res.prompt}`)
+              }
+            } catch (e) {
+              toast('error', errorText(e))
+            }
+          }}
+        >
+          Ganti Media Lokal
+        </Button>
+      </div>
+      {video?.durationMs != null && video.durationMs < clip.durationMs && (
+        <p className="border-b border-sun-ink/20 bg-sun-soft px-[18px] py-2 text-xs leading-relaxed text-sun-ink">
+          Video sumber lebih pendek dari klip ({(video.durationMs / 1000).toFixed(1)} dtk vs {(clip.durationMs / 1000).toFixed(1)} dtk). Ekspor akan menahan frame terakhir.
+        </p>
+      )}
+      <Section title="Pembicara adegan">
+        <Select
+          label="Disuarakan oleh"
+          size="sm"
+          value={clip.speakerId ?? ''}
+          onChange={(id) => updateClip(clip.id, { speakerId: id || null })}
+          options={[{ value: '', label: 'Narator proyek' }, ...characters.map((character) => ({ value: character.id, label: character.name }))]}
+        />
+        <p className="text-xs leading-relaxed text-muted">Tokoh yang tampil tidak otomatis berbicara. Pilih pembicara untuk dialog adegan ini.</p>
+      </Section>
       {clip.motionType === 'video' ? (
         <Section title="Video AI">
           {video ? (
@@ -174,21 +240,222 @@ function ClipTab({ clip, index }: { clip: Clip; index: number }) {
               Jadikan video AI
             </Button>
           </div>
+          {clip.cameraPreset === 'kenburns' && (
+            <div className="mt-2 space-y-2.5 rounded-lg border border-line bg-sand-2 p-2.5">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-ink">Kustom Titik Ken Burns</span>
+                {project?.editor.clipFraming?.[clip.id] && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      const nextFraming = { ...(project.editor.clipFraming ?? {}) }
+                      delete nextFraming[clip.id]
+                      updateEditor({ clipFraming: nextFraming })
+                    }}
+                    className="text-[11px] font-medium text-accent-dark hover:underline"
+                  >
+                    Reset bawaan
+                  </button>
+                )}
+              </div>
+              <div className="grid grid-cols-2 gap-2 text-[11px] text-ink-2">
+                <div className="space-y-1.5 rounded border border-line/60 bg-paper p-2">
+                  <span className="font-semibold text-ink">Titik Awal</span>
+                  <div className="flex items-center justify-between">
+                    <span>Zoom:</span>
+                    <span className="font-mono">{customFraming.start.zoom.toFixed(2)}x</span>
+                  </div>
+                  <input
+                    type="range"
+                    {...historyGestureHandlers}
+                    min={1}
+                    max={1.8}
+                    step={0.05}
+                    value={customFraming.start.zoom}
+                    onChange={(e) => updateCustomFraming({ zoom: Number(e.target.value) }, 'start')}
+                    className="w-full accent-accent"
+                  />
+                  <div className="flex items-center justify-between">
+                    <span>Posisi X:</span>
+                    <span className="font-mono">{customFraming.start.x.toFixed(1)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    {...historyGestureHandlers}
+                    min={-1}
+                    max={1}
+                    step={0.1}
+                    value={customFraming.start.x}
+                    onChange={(e) => updateCustomFraming({ x: Number(e.target.value) }, 'start')}
+                    className="w-full accent-accent"
+                  />
+                  <div className="flex items-center justify-between">
+                    <span>Posisi Y:</span>
+                    <span className="font-mono">{customFraming.start.y.toFixed(1)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    {...historyGestureHandlers}
+                    min={-1}
+                    max={1}
+                    step={0.1}
+                    value={customFraming.start.y}
+                    onChange={(e) => updateCustomFraming({ y: Number(e.target.value) }, 'start')}
+                    className="w-full accent-accent"
+                  />
+                </div>
+                <div className="space-y-1.5 rounded border border-line/60 bg-paper p-2">
+                  <span className="font-semibold text-ink">Titik Akhir</span>
+                  <div className="flex items-center justify-between">
+                    <span>Zoom:</span>
+                    <span className="font-mono">{customFraming.end.zoom.toFixed(2)}x</span>
+                  </div>
+                  <input
+                    type="range"
+                    {...historyGestureHandlers}
+                    min={1}
+                    max={1.8}
+                    step={0.05}
+                    value={customFraming.end.zoom}
+                    onChange={(e) => updateCustomFraming({ zoom: Number(e.target.value) }, 'end')}
+                    className="w-full accent-accent"
+                  />
+                  <div className="flex items-center justify-between">
+                    <span>Posisi X:</span>
+                    <span className="font-mono">{customFraming.end.x.toFixed(1)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    {...historyGestureHandlers}
+                    min={-1}
+                    max={1}
+                    step={0.1}
+                    value={customFraming.end.x}
+                    onChange={(e) => updateCustomFraming({ x: Number(e.target.value) }, 'end')}
+                    className="w-full accent-accent"
+                  />
+                  <div className="flex items-center justify-between">
+                    <span>Posisi Y:</span>
+                    <span className="font-mono">{customFraming.end.y.toFixed(1)}</span>
+                  </div>
+                  <input
+                    type="range"
+                    {...historyGestureHandlers}
+                    min={-1}
+                    max={1}
+                    step={0.1}
+                    value={customFraming.end.y}
+                    onChange={(e) => updateCustomFraming({ y: Number(e.target.value) }, 'end')}
+                    className="w-full accent-accent"
+                  />
+                </div>
+              </div>
+            </div>
+          )}
           <p className="text-xs leading-relaxed text-muted">Ganti gerakan atau kekuatannya untuk langsung melihatnya di pratinjau.</p>
         </Section>
       )}
+      <Section title="Color Grading (Suasana)">
+        <div className="grid grid-cols-2 gap-2">
+          {FILTERS.map((f) => {
+            const on = (clip.filter ?? 'normal') === f.id
+            return (
+              <button
+                key={f.id}
+                type="button"
+                aria-pressed={on}
+                onClick={() => updateClip(clip.id, { filter: f.id })}
+                className={cx(
+                  'flex items-center gap-2 rounded-lg border p-2 text-left transition',
+                  on ? 'border-accent bg-accent/10 shadow-sm' : 'border-line bg-paper hover:border-ink/20'
+                )}
+              >
+                <span className="size-4 shrink-0 rounded-full border border-ink/20 shadow-xs" style={{ backgroundColor: f.swatch }} />
+                <div className="min-w-0 flex-1">
+                  <div className="truncate text-xs font-semibold text-ink">{f.name}</div>
+                  <div className="truncate text-[10px] text-muted">{f.description}</div>
+                </div>
+                {on && <Check className="size-3.5 shrink-0 text-accent" />}
+              </button>
+            )
+          })}
+        </div>
+        <div className="mt-2 flex items-center justify-between">
+          <button
+            type="button"
+            onClick={() => {
+              const currentFilter = clip.filter ?? 'normal'
+              updateClips({ filter: currentFilter })
+              updateEditor({ filter: currentFilter })
+              toast('info', `Filter "${FILTERS.find((f) => f.id === currentFilter)?.name ?? currentFilter}" diterapkan ke semua klip.`)
+            }}
+            className="text-xs font-semibold text-accent-dark hover:underline"
+          >
+            Terapkan filter ini ke semua klip
+          </button>
+        </div>
+      </Section>
     </>
   )
 }
 
 function DbSlider({ label, value, min, max, onChange }: { label: string; value: number; min: number; max: number; onChange: (v: number) => void }) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(String(value))
+
+  const commit = () => {
+    setEditing(false)
+    const n = Number(draft)
+    if (!Number.isNaN(n)) {
+      onChange(Math.max(min, Math.min(max, Math.round(n))))
+    }
+  }
+
   return (
     <div className="flex items-center gap-3 text-[13px]">
-      <input type="range" min={min} max={max} step={1} value={value} onChange={(e) => onChange(Number(e.target.value))} aria-label={label} className="flex-1" />
-      <span className="w-14 text-right font-mono">
-        {value > 0 ? '+' : ''}
-        {value} dB
-      </span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={1}
+        value={value}
+        onPointerDown={() => useProject.getState().beginHistoryGesture()}
+        onPointerUp={() => useProject.getState().endHistoryGesture()}
+        onPointerCancel={() => useProject.getState().endHistoryGesture()}
+        onChange={(e) => onChange(Number(e.target.value))}
+        onDoubleClick={() => onChange(0)}
+        aria-label={label}
+        className="flex-1 cursor-pointer"
+        title="Geser slider (klik ganda untuk reset 0 dB)"
+      />
+      {editing ? (
+        <input
+          type="number"
+          min={min}
+          max={max}
+          autoFocus
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit()
+            if (e.key === 'Escape') setEditing(false)
+          }}
+          className="w-16 rounded border border-ink/30 bg-paper px-1 py-0.5 text-right font-mono text-xs text-ink"
+        />
+      ) : (
+        <span
+          className="w-16 cursor-pointer text-right font-mono text-ink hover:underline"
+          title="Klik untuk ketik nilai langsung"
+          onClick={() => {
+            setDraft(String(value))
+            setEditing(true)
+          }}
+        >
+          {value > 0 ? '+' : ''}
+          {value} dB
+        </span>
+      )}
       <button
         type="button"
         onClick={() => onChange(0)}
@@ -317,7 +584,7 @@ function CaptionTextEditor() {
       const words = latest.current.get(r.key) ?? useProject.getState().assets[r.key]?.meta.words ?? []
       setStatus('saving')
       try {
-        const fresh = await window.api.assets.setWords(r.key, replaceCaptionWords(words, r.from, r.count, tokens.join(' ')))
+        const fresh = await useProject.getState().editWords(r.key, replaceCaptionWords(words, r.from, r.count, tokens.join(' ')))
         latest.current.set(r.key, fresh.meta.words ?? [])
         // A chunk opened since then, later in the same clip, moves with the changed word count.
         const now = range.current
@@ -558,6 +825,7 @@ function CaptionCustom() {
               <span className="w-16 text-ink-2">Opasitas</span>
               <input
                 type="range"
+                {...historyGestureHandlers}
                 min={15}
                 max={100}
                 step={5}
@@ -635,6 +903,7 @@ function CaptionTab() {
           <span className="text-xs text-muted">A</span>
           <input
             type="range"
+            {...historyGestureHandlers}
             min={50}
             max={180}
             step={5}
@@ -802,6 +1071,7 @@ function MusicTab() {
           <label className="flex items-center gap-3 text-[13px]">
             <input
               type="range"
+              {...historyGestureHandlers}
               min={-36}
               max={-3}
               step={1}
@@ -832,23 +1102,50 @@ function TransitionView({ id }: { id: string | null }) {
   return <TransitionPanel clip={clips[i]} next={clips[i + 1]} index={i} />
 }
 
+function SfxTab({ sfxId }: { sfxId: string | null }) {
+  const project = useProject((s) => s.project)
+  const assets = useProject((s) => s.assets)
+  const updateEditor = useProject((s) => s.updateEditor)
+  const sfx = project?.editor.sfx?.find((item) => item.id === sfxId)
+  if (!project || !sfx) return <p className="p-5 text-sm text-muted">Pilih efek suara di timeline.</p>
+  const sourceDuration = assets[sfx.assetId]?.durationMs ?? ((sfx.inMs ?? 0) + sfx.durationMs)
+  const maxIn = Math.max(0, sourceDuration - 100)
+  const update = (patch: Partial<typeof sfx>): void => updateEditor({ sfx: project.editor.sfx?.map((item) => item.id === sfx.id ? { ...item, ...patch } : item) })
+  return <>
+    <div className="flex h-14 items-center gap-2 border-b border-line px-[18px]"><AudioLines className="size-4" /><span className="truncate text-sm font-semibold">{sfx.name}</span></div>
+    <Section title="Volume"><DbSlider label="Volume efek suara" value={sfx.volumeDb ?? 0} min={-36} max={12} onChange={(volumeDb) => update({ volumeDb })} /></Section>
+    <Section title="Potongan suara">
+      <label className="flex items-center gap-2 text-xs text-ink-2">Awal file
+        <input type="number" min={0} max={maxIn} value={sfx.inMs ?? 0}
+          onChange={(e) => { const end = (sfx.inMs ?? 0) + sfx.durationMs; const inMs = Math.max(0, Math.min(Number(e.target.value) || 0, Math.min(maxIn, end - 100))); update({ inMs, durationMs: end - inMs }) }} className="w-24 rounded border border-line-2 bg-paper px-2 py-1 font-mono text-xs" /> ms
+      </label>
+      <label className="flex items-center gap-2 text-xs text-ink-2">Durasi
+        <input type="number" min={100} max={Math.max(100, sourceDuration - (sfx.inMs ?? 0))} value={sfx.durationMs} onChange={(e) => update({ durationMs: Math.max(100, Math.min(sourceDuration - (sfx.inMs ?? 0), Number(e.target.value) || 100)) })} className="w-24 rounded border border-line-2 bg-paper px-2 py-1 font-mono text-xs" /> ms
+      </label>
+    </Section>
+  </>
+}
+
 export function Inspector({
   tab,
   clip,
   index,
   total,
   transitionId
+  ,sfxId
 }: {
   tab: InspectorTab
   clip: Clip | null
   index: number
   total: number
   transitionId: string | null
+  sfxId: string | null
 }) {
   return (
     <aside className="scroll-thin flex min-h-0 flex-col overflow-y-auto border-l border-line bg-surface">
       {tab === 'klip' && (clip ? <ClipTab clip={clip} index={index} /> : <p className="p-5 text-sm text-muted">Pilih klip di timeline.</p>)}
       {tab === 'suara' && (clip ? <VoiceTab clip={clip} index={index} /> : <p className="p-5 text-sm text-muted">Pilih suara klip di timeline.</p>)}
+      {tab === 'sfx' && <SfxTab sfxId={sfxId} />}
       {tab === 'caption' && <CaptionTab />}
       {tab === 'overlay' && <OverlayPanel total={total} />}
       {tab === 'musik' && <MusicTab />}

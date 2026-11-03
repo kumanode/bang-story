@@ -1,8 +1,9 @@
 import { CAMERA_PRESETS, MOTION_STRENGTHS, TRANSITIONS } from '@shared/motion'
+import { formatChapters } from '@shared/chapters'
 import { LANGUAGES, clipCountFor } from '@shared/models'
 import { estimateNarrationMs, needsVisual } from '@shared/script'
 import { getStyle } from '@shared/styles'
-import type { CameraPresetId, Clip, MotionStrength, MusicPrompt, ProjectBundle, TransitionId } from '@shared/types'
+import type { CameraPresetId, Clip, MotionStrength, MusicPrompt, ProjectBundle, TransitionId, YoutubeMetadata } from '@shared/types'
 import { applyVisuals, charactersOf, clipsOf, getBundle, getProject, replaceScript, type SceneVisual } from './repo'
 import { generateJson } from './services/llm'
 
@@ -380,4 +381,79 @@ export async function generateMusicPrompt(projectId: string): Promise<MusicPromp
   }
   if (!out.style && !out.description) throw new Error('Model tidak menghasilkan prompt musik. Coba lagi.')
   return out
+}
+
+const YOUTUBE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    titles: {
+      type: 'array',
+      items: { type: 'string' },
+      description: '3 catchy, high-CTR YouTube titles in the video language.'
+    },
+    description: {
+      type: 'string',
+      description: 'SEO-optimized YouTube video description with a strong hook, summary of the story, and call to action.'
+    },
+    hashtags: {
+      type: 'array',
+      items: { type: 'string' },
+      description: '5 to 8 relevant trending hashtags including the core topic.'
+    },
+    thumbnailConcept: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        prompt: { type: 'string', description: 'English prompt for image generation to create the 16:9 thumbnail art.' },
+        composition: { type: 'string', description: 'Indonesian explanation of layout, lighting, character emotion, and empty space for title text.' },
+        textHook: { type: 'string', description: 'Punchy 2-4 word Indonesian text overlay for the thumbnail.' }
+      },
+      required: ['prompt', 'composition', 'textHook']
+    }
+  },
+  required: ['titles', 'description', 'hashtags', 'thumbnailConcept']
+}
+
+export async function generateYoutubeMetadata(projectId: string): Promise<YoutubeMetadata> {
+  const b = getBundle(projectId)
+  const p = b.project
+  const clips = b.clips
+  if (!clips.length) throw new Error('Naskah masih kosong.')
+  const lang = languageOf(p.language)
+  const chapters = formatChapters(clips)
+  const durationSec = Math.max(10, Math.round(clips.reduce((n, c) => n + c.durationMs, 0) / 1000) || p.durationSec)
+  const scenes = clips.slice(0, 40).map((c, i) => `${i + 1}. ${c.title}: ${(c.story || c.narration).slice(0, 120)}`).join('\n')
+  const system = [
+    'You are a YouTube packaging and SEO expert for high-engagement storytelling channels.',
+    `The video language is ${lang}. Write titles, description, and thumbnail hook in ${lang}.`,
+    'Write the thumbnail image prompt in English for optimal image generation.',
+    'Focus on emotional hooks, high CTR, and viewer retention.'
+  ].join(' ')
+  const prompt = [
+    `Video Title: ${p.title || '(untitled)'}`,
+    `Synopsis / Concept: ${p.synopsis}`,
+    `Duration: ${durationSec}s`,
+    `Scenes:\n${scenes}`,
+    `Timeline Chapters:\n${chapters}`
+  ].join('\n\n')
+
+  const r = await generateJson<Partial<YoutubeMetadata>>({ system, prompt, schema: YOUTUBE_SCHEMA, name: 'youtube_meta' })
+  const titles = Array.isArray(r.titles) ? r.titles.map(str).filter(Boolean) : [p.title]
+  const description = str(r.description)
+  const hashtags = Array.isArray(r.hashtags) ? r.hashtags.map(str).filter(Boolean) : ['#Storytelling', '#BangStory']
+  const tc = r.thumbnailConcept ?? { prompt: '', composition: '', textHook: '' }
+  const thumbnailConcept = {
+    prompt: str(tc.prompt) || 'Cinematic dramatic storytelling scene, high contrast, atmospheric lighting, 16:9 wallpaper, 8k resolution',
+    composition: str(tc.composition) || 'Karakter utama di sepertiga kiri dengan ekspresi tegang, kontras tinggi, ruang kosong di kanan untuk teks hook',
+    textHook: str(tc.textHook) || 'RAHASIA TERBONGKAR!'
+  }
+
+  return {
+    titles: titles.length ? titles : [p.title],
+    description: description ? `${description}\n\n⏱️ DAFTAR BAB:\n${chapters}\n\n${hashtags.join(' ')}` : `${p.synopsis}\n\n⏱️ DAFTAR BAB:\n${chapters}\n\n${hashtags.join(' ')}`,
+    chapters,
+    hashtags,
+    thumbnailConcept
+  }
 }

@@ -133,6 +133,19 @@ const MIGRATIONS: string[] = [
   ALTER TABLE clips ADD COLUMN voice_in_ms INTEGER NOT NULL DEFAULT 0;
   ALTER TABLE clips ADD COLUMN voice_out_ms INTEGER;
   ALTER TABLE clips ADD COLUMN voice_start_ms INTEGER NOT NULL DEFAULT 0;
+  `,
+  // Color grading filter per clip
+  `
+  ALTER TABLE clips ADD COLUMN filter TEXT NOT NULL DEFAULT 'normal';
+  `,
+  // Multi-voice: character voice assignment
+  `
+  ALTER TABLE characters ADD COLUMN tts_voice TEXT;
+  `,
+  `
+  ALTER TABLE clips ADD COLUMN speaker_id TEXT;
+  ALTER TABLE characters ADD COLUMN tts_provider TEXT;
+  UPDATE characters SET tts_provider = (SELECT tts_provider FROM projects WHERE projects.id = characters.project_id) WHERE tts_voice IS NOT NULL;
   `
 ]
 

@@ -30,6 +30,7 @@ interface MediaInfo {
   durationMs: number | null
   width: number | null
   height: number | null
+  videoCodec: string | null
 }
 
 /** Reads duration and frame size from `ffmpeg -i`, which prints stream info and exits without an output file. */
@@ -39,10 +40,12 @@ function probe(absPath: string): Promise<MediaInfo> {
       const text = String(stderr)
       const d = /Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)/.exec(text)
       const size = /Stream #\d+:\d+.*?: Video:.*?,\s*(\d{2,5})x(\d{2,5})/.exec(text)
+      const codec = /Stream #\d+:\d+.*?: Video:\s*([^,\s]+)/.exec(text)
       resolve({
         durationMs: d ? Math.round((+d[1] * 3600 + +d[2] * 60 + +d[3]) * 1000) : null,
         width: size ? +size[1] : null,
-        height: size ? +size[2] : null
+        height: size ? +size[2] : null,
+        videoCodec: codec?.[1] ?? null
       })
     })
   })
@@ -57,4 +60,8 @@ export async function probeDurationMs(absPath: string): Promise<number> {
 export async function probeSize(absPath: string): Promise<{ width: number; height: number } | null> {
   const info = await probe(absPath)
   return info.width && info.height ? { width: info.width, height: info.height } : null
+}
+
+export async function probeVideoCodec(absPath: string): Promise<string | null> {
+  return (await probe(absPath)).videoCodec
 }

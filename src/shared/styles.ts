@@ -119,6 +119,66 @@ export const VISUAL_STYLES: VisualStyle[] = [
     characterHint: 'a 16-bit pixel art character sprite'
   },
   {
+    id: 'cyberpunk',
+    name: 'Cyberpunk neon',
+    category: '2d',
+    niche: 'Sci-fi, masa depan, teknologi',
+    swatch: '#1A102F',
+    ink: '#00F0FF',
+    prompt:
+      'Cyberpunk anime illustration still, glowing magenta and cyan neon lights, futuristic cityscape backdrop with rain reflections, high-tech aesthetic, high contrast, stylized cel shading, cinematic composition. ' +
+      NO_TEXT,
+    characterHint: 'a cyberpunk character with futuristic streetwear and subtle glowing cyberware'
+  },
+  {
+    id: 'retrocomic',
+    name: 'Komik retro pop-art',
+    category: '2d',
+    niche: 'Super-hero, komedi, aksi',
+    swatch: '#F4E04D',
+    ink: '#1F1D1A',
+    prompt:
+      'Vintage 1980s retro comic book panel, bold graphic black ink linework, vibrant pop-art colors, visible Ben-Day halftone dots, dynamic composition, vintage newsprint paper texture. ' +
+      NO_TEXT,
+    characterHint: 'a retro comic book character with bold black ink outlines and halftone shading'
+  },
+  {
+    id: 'ghibli',
+    name: 'Ghibli anime hangat',
+    category: '2d',
+    niche: 'Cerita santai, dongeng, petualangan',
+    swatch: '#A2D5C6',
+    ink: '#1F1D1A',
+    prompt:
+      'Studio Ghibli inspired hand-painted anime film still, lush green landscapes, fluffy painterly cumulus clouds, warm nostalgic natural sunlight, charming expressive characters, gentle gouache watercolor textures, peaceful storybook atmosphere. ' +
+      NO_TEXT,
+    characterHint: 'a charming hand-painted Ghibli-inspired character with gentle expressive features'
+  },
+  {
+    id: 'manhwa',
+    name: 'Manhwa webtoon aksi',
+    category: '2d',
+    niche: 'Aksi, fantasi modern, reinkarnasi',
+    swatch: '#2B1A4A',
+    ink: '#C084FC',
+    prompt:
+      'High-end Korean manhwa webtoon digital art style, glowing vibrant energy aura, sharp dynamic digital ink outlines, dramatic high-contrast lighting, sleek character design, intense expressive eyes, cinematic webtoon panel composition. ' +
+      NO_TEXT,
+    characterHint: 'a sharp Korean webtoon hero character with subtle glowing aura and stylish hair'
+  },
+  {
+    id: 'woodcut',
+    name: 'Ukiran kayu klasik',
+    category: '2d',
+    niche: 'Filsafat, mitologi kuno, sejarah',
+    swatch: '#D7C4A5',
+    ink: '#2C1E14',
+    prompt:
+      'Detailed antique woodcut engraving print, fine cross-hatched black ink linework, vintage Renaissance etching, textured aged parchment paper background, dramatic chiaroscuro contrast, historical intellectual aesthetic. ' +
+      NO_TEXT,
+    characterHint: 'a classical figure rendered in vintage cross-hatched woodcut engraving style'
+  },
+  {
     id: 'animation3d',
     name: 'Animasi 3D',
     category: '3d',
@@ -164,6 +224,18 @@ export const VISUAL_STYLES: VisualStyle[] = [
       'Tilt-shift miniature diorama, tiny detailed 3D figures and buildings, shallow depth of field, soft daylight, toy-like scale. ' +
       NO_TEXT,
     characterHint: 'a tiny detailed miniature figurine'
+  },
+  {
+    id: 'isometric3d',
+    name: 'Diorama isometrik 3D',
+    category: '3d',
+    niche: 'Simulasi, strategi, infografis',
+    swatch: '#7BDCB5',
+    ink: '#1F1D1A',
+    prompt:
+      'Clean isometric 3D render, miniature diorama block, smooth clay and stylized materials, soft warm ambient lighting, cute geometric props, orthographic angle, tilt-shift depth. ' +
+      NO_TEXT,
+    characterHint: 'a cute stylized 3D miniature character with rounded features'
   },
   {
     id: 'cinematic',
@@ -212,6 +284,30 @@ export const VISUAL_STYLES: VisualStyle[] = [
       'Epic realistic fantasy concept art, highly detailed, volumetric light, grand scale, painterly realism, cinematic composition. ' +
       NO_TEXT,
     characterHint: 'an epic realistic fantasy character, concept art'
+  },
+  {
+    id: 'darkfantasy',
+    name: 'Dark fantasy mistis',
+    category: 'realistis',
+    niche: 'Horor, mitologi, legenda gelap',
+    swatch: '#242028',
+    ink: '#E8D7B8',
+    prompt:
+      'Dark fantasy cinematic photograph, dramatic chiaroscuro lighting, deep atmospheric shadows, volumetric fog and mist, gothic folklore tone, weathered textures, rich cinematic mood. ' +
+      NO_TEXT,
+    characterHint: 'a dark fantasy figure with weathered clothing in moody dramatic lighting'
+  },
+  {
+    id: 'analoghorror',
+    name: 'Analog horror VHS',
+    category: 'realistis',
+    niche: 'Horor, misteri, konspirasi, SCP',
+    swatch: '#1A1D1A',
+    ink: '#4ADE80',
+    prompt:
+      'Authentic 1990s analog found-footage camcorder video still, CRT monitor scanlines, magnetic VHS tape noise and tracking distortion, eerie flashlight lighting, muted retro color grading, grainy low-light realism, uncanny suspenseful atmosphere. ' +
+      NO_TEXT,
+    characterHint: 'a person in an eerie found-footage VHS recording, harsh direct flashlight illumination'
   }
 ]
 

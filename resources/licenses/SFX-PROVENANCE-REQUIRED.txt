@@ -1,0 +1,5 @@
+The WAV files in resources/sfx/ have no embedded source, author, or license metadata in this checkout.
+No third-party license or public-domain status is asserted by this notice.
+
+Before distributing these bundled sounds, record the original source and applicable license here. If the
+files were created in-house, record the author and creation date instead.

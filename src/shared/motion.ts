@@ -1,4 +1,4 @@
-import type { CameraPresetId, MotionStrength, TransitionId } from './types'
+import type { CameraCustomFraming, CameraPresetId, MotionStrength, TransitionId } from './types'
 
 /**
  * Camera motion shared by the live preview (CSS transforms) and the FFmpeg export (perspective),
@@ -30,6 +30,10 @@ export const MOTION_STRENGTHS: { id: MotionStrength; label: string; amount: numb
 
 export const TRANSITIONS: { id: TransitionId; label: string; ffmpeg: string | null }[] = [
   { id: 'fade', label: 'Pudar', ffmpeg: 'fade' },
+  { id: 'dissolve', label: 'Kilat putih', ffmpeg: 'fadewhite' },
+  { id: 'dipblack', label: 'Redup ke hitam', ffmpeg: 'fadeblack' },
+  { id: 'wipeleft', label: 'Wipe ke kiri', ffmpeg: 'wipeleft' },
+  { id: 'wiperight', label: 'Wipe ke kanan', ffmpeg: 'wiperight' },
   { id: 'slideleft', label: 'Geser ke kiri', ffmpeg: 'slideleft' },
   { id: 'zoomin', label: 'Zoom tembus', ffmpeg: 'zoomin' },
   { id: 'cut', label: 'Potong langsung', ffmpeg: null }
@@ -60,7 +64,13 @@ const smooth = (p: number): number => {
 const lerp = (a: number, b: number, t: number): number => a + (b - a) * t
 
 /** p is progress 0..1 through the clip, t is seconds since the clip started. */
-export function cameraAt(preset: CameraPresetId, strength: MotionStrength, p: number, t: number): CameraFrame {
+export function cameraAt(
+  preset: CameraPresetId,
+  strength: MotionStrength,
+  p: number,
+  t: number,
+  customFraming?: CameraCustomFraming | null
+): CameraFrame {
   const s = strengthAmount(strength)
   const e = smooth(p)
   switch (preset) {
@@ -73,6 +83,13 @@ export function cameraAt(preset: CameraPresetId, strength: MotionStrength, p: nu
     case 'panright':
       return { zoom: 1 + s, x: lerp(-0.9, 0.9, e), y: 0 }
     case 'kenburns':
+      if (customFraming) {
+        return {
+          zoom: lerp(customFraming.start.zoom, customFraming.end.zoom, e),
+          x: lerp(customFraming.start.x, customFraming.end.x, e),
+          y: lerp(customFraming.start.y, customFraming.end.y, e)
+        }
+      }
       return { zoom: lerp(1 + s * 0.3, 1 + s, e), x: lerp(-0.5, 0.5, e), y: lerp(0.3, -0.3, e) }
     case 'shake':
       return {
@@ -97,7 +114,13 @@ export function cameraCss(frame: CameraFrame): string {
  * moves glide. (zoompan rounds its window to whole pixels every frame, which makes thin lines shimmer and
  * the picture look shaky.) `frames` is the clip length in output frames.
  */
-export function cameraPerspective(preset: CameraPresetId, strength: MotionStrength, frames: number, fps: number): string | null {
+export function cameraPerspective(
+  preset: CameraPresetId,
+  strength: MotionStrength,
+  frames: number,
+  fps: number,
+  customFraming?: CameraCustomFraming | null
+): string | null {
   if (preset === 'static') return null
   const s = strengthAmount(strength)
   const n = Math.max(1, frames - 1)
@@ -126,9 +149,15 @@ export function cameraPerspective(preset: CameraPresetId, strength: MotionStreng
       x = lin(-0.9, 0.9)
       break
     case 'kenburns':
-      z = lin(1 + s * 0.3, 1 + s)
-      x = lin(-0.5, 0.5)
-      y = lin(0.3, -0.3)
+      if (customFraming) {
+        z = lin(customFraming.start.zoom, customFraming.end.zoom)
+        x = lin(customFraming.start.x, customFraming.end.x)
+        y = lin(customFraming.start.y, customFraming.end.y)
+      } else {
+        z = lin(1 + s * 0.3, 1 + s)
+        x = lin(-0.5, 0.5)
+        y = lin(0.3, -0.3)
+      }
       break
     case 'shake':
       z = `${1 + Math.max(0.04, s * 0.5)}`

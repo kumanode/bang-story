@@ -1,4 +1,4 @@
-import { contextBridge, ipcRenderer, type IpcRendererEvent } from 'electron'
+import { contextBridge, ipcRenderer, webUtils, type IpcRendererEvent } from 'electron'
 import { EVENTS, type StudioApi } from '../shared/api'
 
 const call =
@@ -26,9 +26,11 @@ const api: StudioApi = {
   story: {
     script: call('story:script'),
     visuals: call('story:visuals'),
-    musicPrompt: call('story:musicPrompt')
+    musicPrompt: call('story:musicPrompt'),
+    youtubeMetadata: call('story:youtubeMetadata')
   },
   generate: {
+    thumbnail: call('generate:thumbnail'),
     clipImage: call('generate:clipImage'),
     clipVideo: call('generate:clipVideo'),
     clipTts: call('generate:clipTts'),
@@ -49,7 +51,13 @@ const api: StudioApi = {
     setActive: call('assets:setActive'),
     setWords: call('assets:setWords'),
     pickMusic: call('assets:pickMusic'),
-    pickImage: call('assets:pickImage')
+    pickImage: call('assets:pickImage'),
+    listBuiltinSfx: call('assets:listBuiltinSfx'),
+    addBuiltinSfx: call('assets:addBuiltinSfx'),
+    pickSfx: call('assets:pickSfx'),
+    importSfx: call('assets:importSfx'),
+    getPathForFile: (file: File) => webUtils.getPathForFile(file),
+    replaceClipMedia: call('assets:replaceClipMedia')
   },
   settings: {
     get: call('settings:get'),

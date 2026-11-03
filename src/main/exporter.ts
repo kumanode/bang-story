@@ -5,6 +5,9 @@ import ffmpegStatic from 'ffmpeg-static'
 import {
   CAPTION_BOX_PAD,
   CAPTION_BOX_RADIUS,
+  CAPTION_ACTIVE_SCALE,
+  CAPTION_GLOW_BLUR_RATIO,
+  CAPTION_GLOW_OUTLINE_RATIO,
   CAPTION_MAX_WIDTH,
   captionFontFile,
   captionScaleOf,
@@ -20,6 +23,7 @@ import {
 import { cameraPerspective, TRANSITIONS, transitionSecOf } from '@shared/motion'
 import { clipCaptionWords, musicSpan, voiceSpan } from '@shared/timeline'
 import { anchorOffset, contrastColor, overlayEnd, textEffects } from '@shared/overlays'
+import { filterFfmpeg } from '@shared/filters'
 import type { Asset, Clip, ExportOptions, ImageOverlay, Job, ProjectBundle, TextOverlay } from '@shared/types'
 import { emit } from './events'
 import { runJob, type TaskCtx } from './jobs'
@@ -185,7 +189,7 @@ function captionStyleLines(track: CaptionTrack, w: number, h: number): string[] 
   const boxed = !!style.box
   const align = pos === 'atas' ? 8 : pos === 'tengah' ? 5 : 2
   // A boxed caption is plain text over its own rounded box (CapBox); libass can only draw square boxes.
-  const outline = boxed ? 0 : Math.max(1, Math.round(style.outline * h))
+  const outline = baseOutline(style, h)
   const outlineColor = boxed ? '&HFF000000' : assColor(style.outlineColor)
   const side = Math.round((w * (1 - CAPTION_MAX_WIDTH)) / 2)
   const lines = [
@@ -193,6 +197,10 @@ function captionStyleLines(track: CaptionTrack, w: number, h: number): string[] 
   ]
   if (boxed) lines.push(`Style: CapBox,${font.name},${size},${assColor(style.box!, style.boxAlpha)},&H00FFFFFF,&HFF000000,&HFF000000,0,0,0,0,100,100,0,0,1,0,0,7,0,0,0,1`)
   return lines
+}
+
+function baseOutline(style: ResolvedCaption, h: number): number {
+  return style.box ? 0 : Math.max(1, Math.round(style.outline * h))
 }
 
 function captionEvents(track: CaptionTrack, w: number, h: number): string[] {
@@ -209,7 +217,7 @@ function captionEvents(track: CaptionTrack, w: number, h: number): string[] {
     const holdUntil = next ? Math.min(next.start, c.end + 0.6) : c.end + 0.6
     const shown = c.words.map((x) => displayWord(x.text, style))
     // The same line breaks as the preview, written out so libass does not wrap on its own.
-    const layout = layoutCaptionLines(shown, (t) => measure(t) * px, w * CAPTION_MAX_WIDTH)
+    const layout = layoutCaptionLines(shown, (t) => measure(t) * px, w * CAPTION_MAX_WIDTH / (style.popScale ? CAPTION_ACTIVE_SCALE : 1))
     const breaks = new Set<number>()
     let count = 0
     for (const l of layout.slice(0, -1)) breaks.add((count += l.length))
@@ -232,7 +240,27 @@ function captionEvents(track: CaptionTrack, w: number, h: number): string[] {
       const start = j === 0 ? c.start : wd.start
       const end = j + 1 < c.words.length ? c.words[j + 1].start : holdUntil
       if (end <= start) return
-      lines.push(`Dialogue: 1,${assTime(start)},${assTime(end)},Cap,,0,0,0,,${textOf((k) => (k === j ? `{\\c${hl}}${words[k]}{\\c${base}}` : words[k]))}`)
+      const scaleTag = style.popScale ? `\\fscx${Math.round(CAPTION_ACTIVE_SCALE * 100)}\\fscy${Math.round(CAPTION_ACTIVE_SCALE * 100)}` : ''
+      const scaleReset = style.popScale ? '\\fscx100\\fscy100' : ''
+      if (style.glowColor) {
+        // The glow is its own layer under the caption: a blurred outline of the active word only. Drawn in
+        // the same line it would also recolour the word's own outline, and a red word in a red halo is unreadable.
+        const glowPx = Math.max(2, Math.round(px * CAPTION_GLOW_OUTLINE_RATIO))
+        const glowTag = `\\1a&HFF&\\3a&H30&\\4a&HFF&\\3c${assInlineColor(style.glowColor)}\\bord${glowPx}\\blur${Math.round(glowPx * CAPTION_GLOW_BLUR_RATIO)}`
+        lines.push(
+          `Dialogue: 0,${assTime(start)},${assTime(end)},Cap,,0,0,0,,${textOf((k) =>
+            k === j ? `{${glowTag}${scaleTag}}${words[k]}{${scaleReset}}` : `{\\alpha&HFF&}${words[k]}`
+          )}`
+        )
+      }
+      const activeColor = style.pill ? assInlineColor('#000000') : hl
+      const pillTag = style.pill ? `\\bord${Math.max(2, Math.round(px * 0.12))}\\3c${assInlineColor(style.highlight)}` : ''
+      const pillReset = style.pill ? `\\bord${baseOutline(style, h)}\\3c${assInlineColor(style.outlineColor)}` : ''
+      lines.push(
+        `Dialogue: 1,${assTime(start)},${assTime(end)},Cap,,0,0,0,,${textOf((k) =>
+          k === j ? `{\\c${activeColor}${scaleTag}${pillTag}}${words[k]}{\\c${base}${scaleReset}${pillReset}}` : words[k]
+        )}`
+      )
     })
   })
   return lines
@@ -308,7 +336,13 @@ function workSize(srcW: number | null | undefined, srcH: number | null | undefin
 }
 
 /** Scale and crop to the work size, the camera move, then down to the output size. */
-function cameraChain(cam: string | null, work: { w: number; h: number }, size: { w: number; h: number }, between: string[] = []): string {
+function cameraChain(
+  cam: string | null,
+  work: { w: number; h: number },
+  size: { w: number; h: number },
+  between: string[] = [],
+  filterStr: string | null = null
+): string {
   return [
     `scale=${work.w}:${work.h}:force_original_aspect_ratio=increase:flags=lanczos`,
     `crop=${work.w}:${work.h}`,
@@ -316,6 +350,7 @@ function cameraChain(cam: string | null, work: { w: number; h: number }, size: {
     ...between,
     ...(cam ? [cam] : []),
     ...(work.w !== size.w || work.h !== size.h ? [`scale=${size.w}:${size.h}:flags=lanczos`, 'setsar=1'] : []),
+    ...(filterStr ? [filterStr] : []),
     'format=yuv420p'
   ].join(',')
 }
@@ -342,10 +377,17 @@ async function renderSegment(
   const frames = Math.max(1, Math.round(len * opts.fps))
   const video = clip.motionType === 'video' ? assetOf(bundle, clip.videoAssetId) : undefined
   const enc = ['-an', '-c:v', 'libx264', '-preset', 'veryfast', '-crf', '17', '-pix_fmt', 'yuv420p', '-r', String(opts.fps)]
+  const filterStr = filterFfmpeg(clip.filter)
   if (video) {
     const cam = cameraPerspective(clip.videoCamera, clip.videoStrength, Math.max(2, Math.round(seg.own * opts.fps)), opts.fps)
     const work = cam ? workSize(video.width, video.height, size) : size
-    const vf = cameraChain(cam, work, size, [`fps=${opts.fps}`, `tpad=stop_mode=clone:stop_duration=${len.toFixed(3)}`])
+    const vf = cameraChain(
+      cam,
+      work,
+      size,
+      [`fps=${opts.fps}`, `tpad=stop_mode=clone:stop_duration=${len.toFixed(3)}`],
+      filterStr
+    )
     // A video trimmed on the timeline starts that far into its file.
     const from = clip.mediaInMs > 0 ? ['-ss', (clip.mediaInMs / 1000).toFixed(3)] : []
     await runFfmpeg([...from, '-i', assetAbsPath(bundle.project.id, video.localPath), '-vf', vf, '-t', len.toFixed(3), ...enc, out], tmp, signal)
@@ -354,8 +396,9 @@ async function renderSegment(
   const image = assetOf(bundle, clip.imageAssetId)
   if (!image) throw new Error(`Klip ${String(index + 1).padStart(2, '0')} (“${clip.title}”) belum punya gambar.`)
   const ownFrames = Math.max(2, Math.round(seg.own * opts.fps))
-  const cam = cameraPerspective(clip.cameraPreset, clip.motionStrength, ownFrames, opts.fps)
-  const vf = cameraChain(cam, cam ? workSize(image.width, image.height, size) : size, size)
+  const framing = bundle.project.editor.clipFraming?.[clip.id]
+  const cam = cameraPerspective(clip.cameraPreset, clip.motionStrength, ownFrames, opts.fps, framing)
+  const vf = cameraChain(cam, cam ? workSize(image.width, image.height, size) : size, size, [], filterStr)
   await runFfmpeg(
     [
       '-loop',
@@ -508,6 +551,34 @@ async function renderProject(ctx: TaskCtx, projectId: string, opts: ExportOption
         }
         aout = '[mix]'
       } else aout = '[mus]'
+    }
+    const sfxList = (bundle.project.editor.sfx ?? []).filter((s) => s.durationMs > 0 && assetOf(bundle, s.assetId))
+    const sfxOutputs: string[] = []
+    sfxList.forEach((s, i) => {
+      const asset = assetOf(bundle, s.assetId)!
+      args.push('-i', assetAbsPath(projectId, asset.localPath))
+      const ms = Math.max(0, Math.round(s.startMs))
+      const inSec = Math.max(0, (s.inMs ?? 0) / 1000)
+      const durSec = s.durationMs / 1000
+      const db = s.volumeDb ?? 0
+      const gain = Math.abs(db) > 0.01 ? `,volume=${db.toFixed(2)}dB` : ''
+      graph.push(
+        `[${inputIndex}:a]aresample=48000,aformat=channel_layouts=stereo,atrim=start=${inSec.toFixed(3)}:end=${(inSec + durSec).toFixed(3)},asetpts=PTS-STARTPTS${gain},adelay=${ms}|${ms}[sfx${i}]`
+      )
+      sfxOutputs.push(`[sfx${i}]`)
+      inputIndex++
+    })
+    if (sfxOutputs.length) {
+      const sfxMix = sfxOutputs.length === 1 ? sfxOutputs[0] : '[sfxmix]'
+      if (sfxOutputs.length > 1) {
+        graph.push(`${sfxOutputs.join('')}amix=inputs=${sfxOutputs.length}:normalize=0:dropout_transition=0[sfxmix]`)
+      }
+      if (aout) {
+        graph.push(`${aout}${sfxMix}amix=inputs=2:normalize=0:dropout_transition=0[finalmix]`)
+        aout = '[finalmix]'
+      } else {
+        aout = sfxMix
+      }
     }
     if (aout) {
       // loudnorm works at 192 kHz internally, so resample back to 48 kHz afterwards.

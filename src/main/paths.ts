@@ -31,6 +31,10 @@ export function fontsDir(): string {
   return app.isPackaged ? join(process.resourcesPath, 'fonts') : join(app.getAppPath(), 'resources', 'fonts')
 }
 
+export function sfxDir(): string {
+  return app.isPackaged ? join(process.resourcesPath, 'sfx') : join(app.getAppPath(), 'resources', 'sfx')
+}
+
 /** URL the renderer uses for a stored asset (served by the studio:// protocol). */
 export function assetUrl(projectId: string, localPath: string): string {
   const rel = `${projectId}/${localPath}`.split(/[\\/]/).map(encodeURIComponent).join('/')

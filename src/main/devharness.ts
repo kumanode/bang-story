@@ -262,15 +262,16 @@ export function attachDevHarness(win: BrowserWindow): void {
             x0 = Math.round(pt.x)
             y0 = Math.round(pt.y)
           }
-          const send = (type: 'mouseDown' | 'mouseUp' | 'mouseMove', x: number, y: number): void =>
-            win.webContents.sendInputEvent({ type, x, y, button: 'left', clickCount: 1 })
+          const send = (type: 'mouseDown' | 'mouseUp' | 'mouseMove', x: number, y: number, held = false): void =>
+            win.webContents.sendInputEvent({ type, x, y, button: 'left', clickCount: 1, modifiers: held ? ['leftbuttondown'] : [] })
           send('mouseMove', x0, y0)
           send('mouseDown', x0, y0)
           if (step.drag) {
             const steps = 12
             for (let i = 1; i <= steps; i++) {
               await sleep(16)
-              send('mouseMove', x0 + Math.round((step.drag.dx * i) / steps), y0 + Math.round(((step.drag.dy ?? 0) * i) / steps))
+              // Without the held-button flag Chromium sees buttons = 0 and drops pointer capture on the first move.
+              send('mouseMove', x0 + Math.round((step.drag.dx * i) / steps), y0 + Math.round(((step.drag.dy ?? 0) * i) / steps), true)
             }
           }
           await sleep(30)

@@ -692,6 +692,8 @@ export function StoryboardStep() {
               const on = c.id === sel?.id
               const imageJob = jobFor(jobs, 'image', { clipId: c.id })
               const ttsRunning = isRunning(jobFor(jobs, 'tts', { clipId: c.id }))
+              const voice = c.audioAssetId ? assets[c.audioAssetId] : null
+              const synced = !!voice?.meta.words?.length && !voice.meta.estimatedTimings
               const status = c.imageAssetId ? { label: 'Siap', tone: 'ok' as const } : isRunning(imageJob) ? { label: 'Proses', tone: 'warn' as const } : imageJob?.status === 'failed' ? { label: 'Gagal', tone: 'bad' as const } : { label: 'Draf', tone: 'draft' as const }
               return (
                 <button
@@ -711,12 +713,27 @@ export function StoryboardStep() {
                       video={c.videoAssetId ? assets[c.videoAssetId] : null}
                       job={imageJob}
                     />
-                    <span className="absolute left-2 top-2 rounded-md bg-ink px-[7px] py-0.5 font-mono text-xs text-paper">{clipNumber(i)}</span>
-                    {c.motionType === 'video' && (
-                      <span className="absolute right-2 top-2 flex size-6 items-center justify-center rounded-md bg-ink text-paper" title="Video AI">
-                        <Film className="size-3.5" />
-                      </span>
-                    )}
+                    <div className="absolute left-2 top-2 flex items-center gap-1">
+                      <span className="rounded-md bg-ink px-[7px] py-0.5 font-mono text-xs text-paper">{clipNumber(i)}</span>
+                      {c.motionType === 'video' && c.videoAssetId ? (
+                        <span className="rounded-md bg-accent px-1.5 py-0.5 text-[10px] font-semibold text-white shadow-sm">VIDEO AI</span>
+                      ) : c.imageAssetId ? (
+                        <span className="rounded-md border border-line-2 bg-surface/90 px-1.5 py-0.5 text-[10px] font-semibold text-ink shadow-sm">GAMBAR</span>
+                      ) : null}
+                    </div>
+                    <div className="absolute right-2 top-2 flex items-center gap-1">
+                      {c.audioAssetId && (
+                        <span
+                          className={cx(
+                            'rounded-md px-1.5 py-0.5 text-[10px] font-semibold shadow-sm',
+                            synced ? 'border border-ok-soft bg-ok-soft text-ok-ink' : 'border border-sun-soft bg-sun-soft text-sun-ink'
+                          )}
+                          title={synced ? 'Kata caption sudah sinkron dengan Whisper' : 'Waktu caption masih estimasi'}
+                        >
+                          {synced ? 'SYNCED' : 'ESTIMATE'}
+                        </span>
+                      )}
+                    </div>
                     <span className="absolute bottom-2 right-2 rounded-md border border-ink bg-surface px-[7px] py-px font-mono text-xs">
                       {mmss(c.durationMs)}
                     </span>

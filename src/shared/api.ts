@@ -3,6 +3,7 @@ import type {
   AspectRatio,
   AppSettings,
   Asset,
+  BuiltinSfx,
   CharacterPatchEvent,
   ClipPatchEvent,
   CreditEstimate,
@@ -20,7 +21,8 @@ import type {
   ProjectSnapshot,
   ProjectSummary,
   TtsProvider,
-  VoiceOption
+  VoiceOption,
+  YoutubeMetadata
 } from './types'
 
 /** The typed surface the preload script exposes as `window.api`. */
@@ -40,8 +42,11 @@ export interface StudioApi {
     visuals(projectId: string, mode: 'missing' | 'all'): Promise<ProjectBundle>
     /** A background-music prompt that fits the finished script, for use in Suno or another music AI. */
     musicPrompt(projectId: string): Promise<MusicPrompt>
+    /** AI titles, description, timestamps, and thumbnail concept for YouTube. */
+    youtubeMetadata(projectId: string): Promise<YoutubeMetadata>
   }
   generate: {
+    thumbnail(projectId: string, prompt: string, variation: number): Promise<Job>
     clipImage(clipId: string): Promise<Job>
     clipVideo(clipId: string): Promise<Job>
     clipTts(clipId: string): Promise<Job>
@@ -71,6 +76,12 @@ export interface StudioApi {
     pickMusic(projectId: string): Promise<Asset | null>
     /** A logo or watermark image for an overlay. */
     pickImage(projectId: string): Promise<Asset | null>
+    listBuiltinSfx(): Promise<BuiltinSfx[]>
+    addBuiltinSfx(projectId: string, sfxId: string): Promise<Asset>
+    pickSfx(projectId: string): Promise<Asset | null>
+    importSfx(projectId: string, path: string): Promise<Asset>
+    getPathForFile(file: File): string
+    replaceClipMedia(projectId: string, clipId: string): Promise<Asset | null>
   }
   settings: {
     get(): Promise<AppSettings>

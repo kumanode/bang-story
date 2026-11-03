@@ -3,7 +3,7 @@ import { create } from 'zustand'
 import { timelineChunks, type CaptionChunk } from '@shared/captions'
 import { transitionSecOf } from '@shared/motion'
 import { clipCaptionWords, voiceSpan } from '@shared/timeline'
-import type { Asset, Clip, Overlay, TransitionId } from '@shared/types'
+import type { Asset, Clip, Overlay, SfxItem, TransitionId } from '@shared/types'
 import { useProject } from '../../../store/project'
 
 export interface TimelineItem {
@@ -38,6 +38,37 @@ export const usePlayback = create<PlaybackState>((set, get) => ({
 export const useOverlayUi = create<{ selectedId: string | null; select(id: string | null): void }>((set) => ({
   selectedId: null,
   select: (id) => set({ selectedId: id })
+}))
+
+/** Track controls for muting audio and hiding visuals in the preview player. */
+export const useTrackControls = create<{
+  lockedTracks: Record<string, boolean>
+  voiceMuted: boolean
+  musicMuted: boolean
+  sfxMuted: boolean
+  captionsHidden: boolean
+  overlaysHidden: boolean
+  toggleVoiceMute(): void
+  toggleMusicMute(): void
+  toggleSfxMute(): void
+  toggleCaptionsHide(): void
+  toggleOverlaysHide(): void
+  reset(): void
+  toggleTrackLock(track: string): void
+}>((set, get) => ({
+  lockedTracks: {},
+  voiceMuted: false,
+  musicMuted: false,
+  sfxMuted: false,
+  captionsHidden: false,
+  overlaysHidden: false,
+  toggleVoiceMute: () => set({ voiceMuted: !get().voiceMuted }),
+  toggleMusicMute: () => set({ musicMuted: !get().musicMuted }),
+  toggleSfxMute: () => set({ sfxMuted: !get().sfxMuted }),
+  toggleCaptionsHide: () => set({ captionsHidden: !get().captionsHidden }),
+  toggleOverlaysHide: () => set({ overlaysHidden: !get().overlaysHidden }),
+  reset: () => set({ voiceMuted: false, musicMuted: false, sfxMuted: false, captionsHidden: false, overlaysHidden: false, lockedTracks: {} }),
+  toggleTrackLock: (track) => set({ lockedTracks: { ...get().lockedTracks, [track]: !get().lockedTracks[track] } })
 }))
 
 /**
@@ -147,6 +178,8 @@ export function itemAt(items: TimelineItem[], t: number): number {
 }
 
 const dbToGain = (db: number): number => Math.pow(10, db / 20)
+const NO_SFX: SfxItem[] = []
+const NO_ASSETS: Record<string, Asset> = {}
 
 /**
  * Drives the clock and keeps narration and music audio in step with it. An audio element cannot play louder
@@ -160,9 +193,12 @@ export function usePlaybackEngine(
   musicDb: number,
   duck: boolean,
   voiceDb = 0,
-  musicRange: { startSec: number; endSec: number; inSec: number } = { startSec: 0, endSec: Infinity, inSec: 0 }
+  musicRange: { startSec: number; endSec: number; inSec: number } = { startSec: 0, endSec: Infinity, inSec: 0 },
+  sfxList: SfxItem[] = NO_SFX,
+  assets: Record<string, Asset> = NO_ASSETS
 ): void {
   const voices = useRef(new Map<string, HTMLAudioElement>())
+  const sfxAudios = useRef(new Map<string, HTMLAudioElement>())
   const musicEl = useRef<HTMLAudioElement | null>(null)
 
   useEffect(() => {
@@ -181,10 +217,33 @@ export function usePlaybackEngine(
     for (const [id, a] of map) {
       if (!keep.has(id)) {
         a.pause()
+        a.src = ''
         map.delete(id)
       }
     }
   }, [items])
+
+  useEffect(() => {
+    const map = sfxAudios.current
+    const keep = new Set<string>()
+    for (const s of sfxList) {
+      const asset = assets[s.assetId]
+      if (!asset) continue
+      keep.add(s.id)
+      if (!map.has(s.id)) {
+        const a = new Audio(asset.url)
+        a.preload = 'auto'
+        map.set(s.id, a)
+      }
+    }
+    for (const [id, a] of map) {
+      if (!keep.has(id)) {
+        a.pause()
+        a.src = ''
+        map.delete(id)
+      }
+    }
+  }, [sfxList, assets])
 
   useEffect(() => {
     musicEl.current?.pause()
@@ -203,15 +262,17 @@ export function usePlaybackEngine(
     let raf = 0
     let last = performance.now()
     const voiceGain = (it: TimelineItem): number => dbToGain(voiceDb + (it.clip.voiceGainDb ?? 0))
-    const loudest = Math.max(1, dbToGain(musicDb), ...items.filter((it) => it.audio).map(voiceGain))
+    const sfxMaxGain = sfxList.length ? Math.max(...sfxList.map((s) => dbToGain(s.volumeDb ?? 0))) : 0
+    const loudest = Math.max(1, dbToGain(musicDb), sfxMaxGain, ...items.filter((it) => it.audio).map(voiceGain))
     const sync = (t: number, playing: boolean): void => {
+      const { voiceMuted, musicMuted, sfxMuted } = useTrackControls.getState()
       let voiceActive = false
       items.forEach((it) => {
         const w = voiceWindow(it)
         if (!w || !it.audio) return
         const a = voices.current.get(`${it.clip.id}|${it.audio.id}`)
         if (!a) return
-        a.volume = Math.min(1, voiceGain(it) / loudest)
+        a.volume = voiceMuted ? 0 : Math.min(1, voiceGain(it) / loudest)
         // The voice as trimmed and placed in its clip; it stops at the clip's end.
         const target = w.inSec + (t - w.from)
         if (playing && t >= w.from && t < w.to) {
@@ -224,7 +285,7 @@ export function usePlaybackEngine(
       })
       const m = musicEl.current
       if (m) {
-        m.volume = Math.min(1, (dbToGain(musicDb) * (duck && voiceActive ? 0.35 : 1)) / loudest)
+        m.volume = musicMuted ? 0 : Math.min(1, (dbToGain(musicDb) * (duck && voiceActive ? 0.35 : 1)) / loudest)
         if (playing && t >= musicRange.startSec && t < musicRange.endSec) {
           const raw = musicRange.inSec + (t - musicRange.startSec)
           const target = m.duration ? raw % m.duration : raw
@@ -234,6 +295,22 @@ export function usePlaybackEngine(
           } else if (Math.abs(m.currentTime - target) > 0.4 && m.duration - Math.abs(m.currentTime - target) > 0.4) m.currentTime = target
         } else if (!m.paused) m.pause()
       }
+      sfxList.forEach((s) => {
+        const a = sfxAudios.current.get(s.id)
+        if (!a) return
+        const sfxGain = dbToGain(s.volumeDb ?? 0)
+        a.volume = sfxMuted ? 0 : Math.min(1, sfxGain / loudest)
+        const from = s.startMs / 1000
+        const to = from + s.durationMs / 1000
+        const inSec = (s.inMs ?? 0) / 1000
+        const target = inSec + (t - from)
+        if (playing && t >= from && t < to) {
+          if (a.paused) {
+            a.currentTime = target
+            void a.play().catch(() => {})
+          } else if (Math.abs(a.currentTime - target) > 0.3) a.currentTime = target
+        } else if (!a.paused) a.pause()
+      })
     }
     const tick = (now: number): void => {
       const s = usePlayback.getState()
@@ -251,9 +328,10 @@ export function usePlaybackEngine(
     return () => {
       cancelAnimationFrame(raf)
       for (const a of voices.current.values()) a.pause()
+      for (const a of sfxAudios.current.values()) a.pause()
       musicEl.current?.pause()
     }
-  }, [items, total, musicDb, duck, voiceDb, musicRange.startSec, musicRange.endSec, musicRange.inSec])
+  }, [items, total, musicDb, duck, voiceDb, musicRange.startSec, musicRange.endSec, musicRange.inSec, sfxList])
 
   useEffect(() => () => usePlayback.setState({ playing: false }), [])
 }

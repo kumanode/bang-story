@@ -42,10 +42,12 @@ src/
     devharness.ts  otomatisasi uji (hanya mode pengembangan)
   preload/         jembatan aman: window.api (lihat src/shared/api.ts)
   shared/          kode yang dipakai main DAN renderer (tipe, aturan gerak, caption, timeline)
+    filters.ts    preset filter warna untuk pratinjau dan ekspor
+    sfx.ts        katalog efek suara bawaan
   renderer/src/    tampilan React + Tailwind v4 + Zustand
     pages/project/  langkah Ide, Naskah, Storyboard, Editor
     pages/project/editor/  pratinjau (Player), Timeline, Inspector (panel kanan), engine pemutaran
-resources/         font caption, whisper-cli.exe + DLL, file lisensi
+resources/         font caption, SFX bawaan, whisper-cli.exe + DLL, file lisensi
 build/             ikon aplikasi untuk installer (icon.ico, icon.png), dibuat dari logo di components/Logo.tsx
 docs/              dokumentasi pengembang
 ```

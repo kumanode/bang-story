@@ -9,6 +9,7 @@ semua aturan yang memengaruhi hasil ditulis di `src/shared/` dan dipakai dua sis
 | `captions.ts` | gaya caption, 15 font + metriknya, pemenggalan baris, potongan caption, kotak rounded | Player | exporter (ASS) |
 | `timeline.ts` | `voiceSpan`, `clipCaptionWords`, `musicSpan`, `splitNarration` | engine, Timeline | exporter, editing |
 | `overlays.ts` | posisi (anchor numpad), gaya teks overlay | Player, OverlayPanel | exporter |
+| `filters.ts` | preset filter warna dan filter CSS/FFmpeg | Player | exporter |
 | `higgsfield.ts` | body permintaan model, durasi, resolusi | ModelSection | generation |
 
 ## Model timeline
@@ -19,6 +20,7 @@ Caption  ▭▭ ▭▭ ▭▭                  dari kata narasi tiap klip (meta.
 Suara  [~~~][~~~ ][~~]            milik klipnya: bisa dipotong dan digeser di dalam klip, terpotong di akhir klip
 Musik  [==========]               satu file, posisi editor.musicStartMs..musicEndMs, mulai musicInMs di dalam lagu
 Overlay [logo.....] / [teks]      overlay yang waktunya bertumpuk otomatis pindah ke baris baru (overlayLanes)
+SFX    [boom]     [whoosh.....]   efek suara bebas, dengan potongan awal/akhir dan volume per item
 ```
 
 Aturan edit (`renderer/src/pages/project/editor/Timeline.tsx`):
@@ -29,13 +31,15 @@ Aturan edit (`renderer/src/pages/project/editor/Timeline.tsx`):
 - **Suara**: tepi kiri memotong awal suara tanpa menggeser sisanya (`voiceInMs` dan `voiceStartMs` naik
   bersama), tepi kanan memotong akhir (`voiceOutMs`), seret badan untuk memindahkan (`voiceStartMs`).
 - **Caption**: tepi atau badan menggeser waktu kata potongan itu; disimpan lewat `assets:setWords` saat dilepas.
-- **Musik dan overlay**: tepi untuk awal/akhir, badan untuk memindahkan.
+- **Musik, SFX, dan overlay**: tepi untuk awal/akhir, badan untuk memindahkan. SFX dapat di-snap ke playhead dan batas klip; drop file WAV/MP3/OGG/M4A pada track SFX untuk mengimpornya.
+- Tombol kunci di label track mencegah pemilihan, geser, dan trim item di track tersebut. Kunci hanya berlaku di editor dan reset saat proyek berganti.
 - Tepi menempel (snap) ke playhead dan sambungan klip dalam radius 8 px. Skala timeline dibekukan selama menyeret.
 - **Potong** (`S`/Ctrl+B): `clips:split` di `editing.ts` membelah klip di playhead. Titik potong digeser ke jeda
   antar kata terdekat; file suara dan teks narasi dibelah (`splitNarration`), dan bagian kedua memakai gambar/video
   yang sama dengan `mediaInMs` bertambah. Bagian pertama berakhir dengan transisi `cut`.
 - **Hapus** (`Delete`): klip (dengan konfirmasi), suara (`clips:detachVoice`), potongan caption (kata dihapus),
-  musik, overlay, atau transisi (menjadi `cut`).
+  musik, SFX, overlay, atau transisi (menjadi `cut`).
+- **Undo/Redo** (`Ctrl+Z`, `Ctrl+Y`): perubahan edit lokal dicatat; hasil job AI dan aset baru tetap ada saat undo. Perubahan kata caption disimpan kembali ke database; kegagalan simpan memberi notifikasi.
 
 ## Pratinjau (`Player.tsx` + `engine.ts`)
 
@@ -57,6 +61,7 @@ Aturan edit (`renderer/src/pages/project/editor/Timeline.tsx`):
   pratinjau.
 - **Caption**: dirender di DOM dengan font yang sama dengan ekspor; pemenggalan baris memakai
   `layoutCaptionLines` dengan lebar dari canvas, sehingga barisnya sama dengan ekspor.
+- **Filter warna**: filter per klip; `EditorSettings.filter` menjadi nilai awal untuk klip baru. Kontrol track mute/hide dan kunci track hanya mengubah editor/pratinjau, tidak mengubah render.
 
 ## Ekspor (`src/main/exporter.ts`)
 
@@ -71,10 +76,15 @@ Aturan edit (`renderer/src/pages/project/editor/Timeline.tsx`):
    - rantai `xfade` antar segmen (offset = awal segmen berikutnya, durasi = overlap);
    - overlay gambar (`overlay` dengan `enable=between(t,...)`);
    - caption + teks overlay lewat filter `ass` (libass) dengan `fontsdir` berisi font bawaan;
-   - audio: setiap suara `atrim` (potongan) → fade pendek kalau terpotong akhir klip → `volume` → `adelay`
-     (posisi), lalu `amix`; musik `-stream_loop -1` → `atrim` mulai di `musicIn` → panjang → `volume` → fade
+  - audio: setiap suara narasi dan SFX `atrim` (potongan) → `volume` → `adelay` (posisi), lalu `amix`; musik `-stream_loop -1` → `atrim` mulai di `musicIn` → panjang → `volume` → fade
      out → `adelay`; turunkan musik saat narasi dengan `sidechaincompress`; `loudnorm` −14 LUFS (opsional).
 4. Hasil: MP4 (H.264 + AAC, `+faststart`), dan `.srt` opsional. Nama file yang sudah ada diberi akhiran `-2`, `-3`.
+
+Filter per klip berasal dari `shared/filters.ts`. Pratinjau memakai CSS; ekspor memakai FFmpeg dengan EQ, LUT RGB multiplikatif, color-channel mixer untuk sepia, lalu hue. CSS dan FFmpeg memakai urutan sama, tetapi ruang warna RGB/YUV masih dapat memberi beda kecil.
+
+Transisi `dissolve` lama dipetakan ke `fadewhite` (Kilat putih), yang punya simulasi flash di pratinjau. SFX terpisah dari suara tertaut klip: posisi memakai `adelay`, potongan memakai `atrim`, dan levelnya digabung dengan `amix` sebelum loudness normalization.
+
+Gerak Ken Burns kustom tersimpan di `editor.clipFraming` dengan kunci ID klip; duplikasi proyek dan split klip ikut menyalin framingnya.
 
 ### Caption di ekspor
 

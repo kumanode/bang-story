@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { copyFileSync, mkdirSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
 import { basename, dirname, extname, join } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import type {
@@ -22,6 +22,7 @@ import {
   generateCharacterSheet,
   generateClipImage,
   generateClipTts,
+  generateThumbnail,
   generateClipVideo,
   generateMissingImages,
   generateMissingVideos,
@@ -31,7 +32,7 @@ import {
 import { cancelJob } from './jobs'
 import { generateNarration, syncCaptions } from './narration'
 import { cancelDownload, downloadModel, openModelFolder, removeModel, whisperStatus } from './whisper'
-import { assetAbsPath } from './paths'
+import { assetAbsPath, sfxDir } from './paths'
 import { detachVoice, splitClip } from './editing'
 import { emit } from './events'
 import {
@@ -39,22 +40,26 @@ import {
   duplicateProject,
   getAsset,
   getBundle,
+  getClip,
   getProject,
   insertAsset,
   listProjects,
+  patchClip,
   removeProject,
   saveSnapshot,
   updateAssetMeta
 } from './repo'
+import { BUILTIN_SFX } from '@shared/sfx'
+import type { Clip } from '@shared/types'
 import { clearSecret, keyStatuses, recordCheck, revealSecret, setSecret } from './secrets'
 import { dropCache, getSettings, setSettings } from './settings'
-import { probeDurationMs, probeSize } from './services/audio'
+import { probeDurationMs, probeSize, probeVideoCodec } from './services/audio'
 import * as eleven from './services/elevenlabs'
 import * as gemini from './services/gemini'
 import * as f2a from './services/flow2api'
 import * as hf from './services/higgsfield'
 import * as llm from './services/llm'
-import { generateScript, generateVisuals, generateMusicPrompt } from './story'
+import { generateScript, generateVisuals, generateMusicPrompt, generateYoutubeMetadata } from './story'
 
 
 type Handler = (...args: any[]) => unknown
@@ -91,9 +96,15 @@ export function registerIpc(): void {
 
   handle('story:script', (projectId: string) => generateScript(projectId))
   handle('story:musicPrompt', (projectId: string) => generateMusicPrompt(projectId))
+  handle('story:youtubeMetadata', (projectId: string) => generateYoutubeMetadata(projectId))
   handle('story:visuals', (projectId: string, mode: 'missing' | 'all') => generateVisuals(projectId, mode === 'all' ? 'all' : 'missing'))
 
   handle('generate:clipImage', (clipId: string) => generateClipImage(clipId))
+  handle('generate:thumbnail', (projectId: string, prompt: string, variation: number) => {
+    if (!prompt.trim()) throw new Error('Prompt thumbnail masih kosong')
+    if (!Number.isInteger(variation) || variation < 1 || variation > 3) throw new Error('Jumlah variasi thumbnail tidak valid')
+    return generateThumbnail(projectId, prompt, variation)
+  })
   handle('generate:clipVideo', (clipId: string) => generateClipVideo(clipId))
   handle('generate:clipTts', (clipId: string) => generateClipTts(clipId))
   handle('generate:characterSheet', (characterId: string) => generateCharacterSheet(characterId))
@@ -181,6 +192,137 @@ export function registerIpc(): void {
       width: size.width,
       height: size.height
     })
+  })
+
+  handle('assets:listBuiltinSfx', () => BUILTIN_SFX)
+
+  handle('assets:addBuiltinSfx', async (projectId: string, sfxId: string) => {
+    const item = BUILTIN_SFX.find((s) => s.id === sfxId)
+    if (!item) throw new Error('Efek suara bawaan tidak ditemukan')
+    getProject(projectId)
+    const src = join(sfxDir(), item.fileName)
+    const durationMs = await probeDurationMs(src)
+    const rel = `sfx/${randomUUID()}_${item.fileName}`
+    const abs = assetAbsPath(projectId, rel)
+    mkdirSync(dirname(abs), { recursive: true })
+    copyFileSync(src, abs)
+    const asset = insertAsset({
+      projectId,
+      kind: 'sfx',
+      provider: 'builtin',
+      prompt: item.name,
+      localPath: rel,
+      durationMs
+    })
+    emit.asset(asset)
+    return asset
+  })
+
+  handle('assets:pickSfx', async (projectId: string) => {
+    const win = BrowserWindow.getFocusedWindow()
+    const res = await dialog.showOpenDialog(win!, {
+      title: 'Pilih file efek suara (SFX)',
+      filters: [{ name: 'Audio SFX', extensions: ['wav', 'mp3', 'ogg', 'm4a'] }],
+      properties: ['openFile']
+    })
+    if (res.canceled || !res.filePaths[0]) return null
+    getProject(projectId)
+    const src = res.filePaths[0]
+    const rel = `sfx/${randomUUID()}${extname(src).toLowerCase()}`
+    const abs = assetAbsPath(projectId, rel)
+    mkdirSync(dirname(abs), { recursive: true })
+    copyFileSync(src, abs)
+    const durationMs = await probeDurationMs(abs).catch(() => null)
+    if (!durationMs) {
+      rmSync(abs, { force: true })
+      throw new Error('Durasi file tidak terbaca. Pilih file WAV, MP3, OGG, atau M4A yang valid.')
+    }
+    const asset = insertAsset({
+      projectId,
+      kind: 'sfx',
+      provider: 'local',
+      prompt: basename(src),
+      localPath: rel,
+      durationMs
+    })
+    emit.asset(asset)
+    return asset
+  })
+
+  handle('assets:importSfx', async (projectId: string, src: string) => {
+    getProject(projectId)
+    const ext = extname(src).toLowerCase()
+    if (!['.wav', '.mp3', '.ogg', '.m4a'].includes(ext) || !existsSync(src) || !statSync(src).isFile()) {
+      throw new Error('File SFX harus berupa WAV, MP3, OGG, atau M4A.')
+    }
+    const rel = `sfx/${randomUUID()}${ext}`
+    const abs = assetAbsPath(projectId, rel)
+    mkdirSync(dirname(abs), { recursive: true })
+    copyFileSync(src, abs)
+    const durationMs = await probeDurationMs(abs).catch(() => null)
+    if (!durationMs) {
+      rmSync(abs, { force: true })
+      throw new Error('Durasi file tidak terbaca. Pilih file audio yang valid.')
+    }
+    const asset = insertAsset({ projectId, kind: 'sfx', provider: 'local', prompt: basename(src), localPath: rel, durationMs })
+    emit.asset(asset)
+    return asset
+  })
+
+  handle('assets:replaceClipMedia', async (projectId: string, clipId: string) => {
+    const ownedClip = getClip(clipId)
+    if (ownedClip.projectId !== projectId) throw new Error('Klip tidak cocok dengan proyek ini')
+    const win = BrowserWindow.getFocusedWindow()
+    const res = await dialog.showOpenDialog(win!, {
+      title: 'Pilih file media lokal untuk klip',
+      filters: [
+        { name: 'Semua Media', extensions: ['png', 'jpg', 'jpeg', 'webp', 'mp4', 'webm', 'mov'] },
+        { name: 'Gambar', extensions: ['png', 'jpg', 'jpeg', 'webp'] },
+        { name: 'Video', extensions: ['mp4', 'webm', 'mov'] }
+      ],
+      properties: ['openFile']
+    })
+    if (res.canceled || !res.filePaths[0]) return null
+    getProject(projectId)
+    const src = res.filePaths[0]
+    const ext = extname(src).toLowerCase()
+    const isVid = ['.mp4', '.webm', '.mov'].includes(ext)
+    const kind = isVid ? 'video' : 'image'
+    const rel = `${kind}s/${randomUUID()}${ext}`
+    const abs = assetAbsPath(projectId, rel)
+    mkdirSync(dirname(abs), { recursive: true })
+    copyFileSync(src, abs)
+
+    const size = await probeSize(abs).catch(() => null)
+    const durationMs = isVid ? await probeDurationMs(abs).catch(() => null) : null
+    if (isVid) {
+      const codec = await probeVideoCodec(abs)
+      if (!durationMs || !codec || !['h264', 'vp8', 'vp9', 'av1'].includes(codec.toLowerCase())) {
+        rmSync(abs, { force: true })
+        throw new Error(`Video ${codec ?? 'ini'} tidak bisa diputar di pratinjau. Gunakan MP4 H.264 atau WebM VP8/VP9.`)
+      }
+    }
+
+    const asset = insertAsset({
+      projectId,
+      clipId,
+      kind,
+      provider: 'local',
+      prompt: basename(src),
+      localPath: rel,
+      width: size?.width ?? null,
+      height: size?.height ?? null,
+      durationMs
+    })
+
+    const patch: Partial<Clip> = isVid
+      ? { motionType: 'video', videoAssetId: asset.id, mediaInMs: 0 }
+      : { motionType: 'camera', imageAssetId: asset.id }
+
+    patchClip(clipId, patch)
+    emit.clip({ clipId, patch })
+    emit.asset(asset)
+    return asset
   })
 
   handle('settings:get', () => getSettings())

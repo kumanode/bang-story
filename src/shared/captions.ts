@@ -18,6 +18,12 @@ export interface CaptionStyle {
   outline: number
   outlineColor: string
   uppercase: boolean
+  /** Pop-scale active word by 115% */
+  popScale?: boolean
+  /** Pill badge for active word */
+  pill?: boolean
+  /** Glow shadow color for active word */
+  glowColor?: string
 }
 
 export const CAPTION_STYLES: CaptionStyle[] = [
@@ -48,6 +54,85 @@ export const CAPTION_STYLES: CaptionStyle[] = [
     outline: 0.006,
     outlineColor: '#1F1D1A',
     uppercase: true
+  },
+  {
+    id: 'hormozi',
+    name: 'Hormozi',
+    font: 'Poppins',
+    weight: 800,
+    size: 0.068,
+    color: '#FFFFFF',
+    highlight: '#00FF66',
+    box: null,
+    boxAlpha: 0,
+    outline: 0.007,
+    outlineColor: '#100F0E',
+    uppercase: true,
+    popScale: true
+  },
+  {
+    id: 'wordpill',
+    name: 'Kapsul Kata',
+    font: 'Poppins',
+    weight: 700,
+    size: 0.055,
+    color: '#FFFFFF',
+    highlight: '#FFD000',
+    box: null,
+    boxAlpha: 0,
+    outline: 0.004,
+    outlineColor: '#1F1D1A',
+    uppercase: false,
+    pill: true,
+    popScale: true
+  },
+  {
+    id: 'crimson',
+    name: 'Merah Darah',
+    font: 'Poppins',
+    weight: 800,
+    size: 0.065,
+    color: '#F0EDEA',
+    highlight: '#FF1E38',
+    box: null,
+    boxAlpha: 0,
+    outline: 0.007,
+    outlineColor: '#050505',
+    uppercase: true,
+    popScale: true,
+    glowColor: '#FF1E38'
+  },
+  {
+    id: 'ghostmist',
+    name: 'Bisikan Arwah',
+    font: 'Poppins',
+    weight: 700,
+    size: 0.058,
+    color: '#A2B6BA',
+    highlight: '#00FFB3',
+    box: null,
+    boxAlpha: 0,
+    outline: 0.004,
+    outlineColor: '#091416',
+    uppercase: false,
+    popScale: true,
+    glowColor: '#00FFB3'
+  },
+  {
+    id: 'ritual',
+    name: 'Api Ritual',
+    font: 'DM Serif Display',
+    weight: 700,
+    size: 0.062,
+    color: '#B89F82',
+    highlight: '#FF6600',
+    box: null,
+    boxAlpha: 0,
+    outline: 0.005,
+    outlineColor: '#120C06',
+    uppercase: true,
+    popScale: true,
+    glowColor: '#FF6600'
   },
   {
     id: 'minimal',
@@ -135,6 +220,11 @@ export function captionFontFile(style: { fontInfo: CaptionFont; weight: number }
 
 /** Corner radius of the caption box, as a share of the font size. */
 export const CAPTION_BOX_RADIUS = 0.4
+export const CAPTION_ACTIVE_SCALE = 1.15
+export const CAPTION_GLOW_INNER_RADIUS = 0.35
+export const CAPTION_GLOW_OUTER_RADIUS = 0.7
+export const CAPTION_GLOW_OUTLINE_RATIO = 0.18
+export const CAPTION_GLOW_BLUR_RATIO = 0.8
 
 /** Captions may use this share of the frame width, as libass does with 8% side margins. */
 export const CAPTION_MAX_WIDTH = 0.84

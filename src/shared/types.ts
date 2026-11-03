@@ -9,12 +9,46 @@ export type ModelSource = LlmProvider | 'gemini-tts' | 'elevenlabs'
 export type MotionType = 'camera' | 'video'
 export type CameraPresetId = 'zoomin' | 'zoomout' | 'panleft' | 'panright' | 'kenburns' | 'shake' | 'static'
 export type MotionStrength = 'halus' | 'sedang' | 'kuat'
-export type TransitionId = 'cut' | 'fade' | 'slideleft' | 'zoomin'
-export type CaptionStyleId = 'karaoke' | 'tebal' | 'minimal' | 'subtitle' | 'none'
+export type TransitionId = 'cut' | 'fade' | 'slideleft' | 'zoomin' | 'dipblack' | 'dissolve' | 'wipeleft' | 'wiperight'
+export type FilterId = 'normal' | 'warm' | 'cold' | 'cyberpunk' | 'noir' | 'vintage'
+export type CaptionStyleId =
+  | 'karaoke'
+  | 'tebal'
+  | 'minimal'
+  | 'subtitle'
+  | 'hormozi'
+  | 'wordpill'
+  | 'crimson'
+  | 'ghostmist'
+  | 'ritual'
+  | 'none'
 export type CaptionPosition = 'atas' | 'tengah' | 'bawah'
 export type CaptionSize = 'kecil' | 'sedang' | 'besar'
 /** 1 idea, 2 script, 3 storyboard, 4 editor */
 export type Step = 1 | 2 | 3 | 4
+
+export interface CameraCustomFraming {
+  start: { x: number; y: number; zoom: number }
+  end: { x: number; y: number; zoom: number }
+}
+
+export interface SfxItem {
+  id: string
+  assetId: string
+  name: string
+  startMs: number
+  durationMs: number
+  inMs?: number
+  volumeDb?: number
+}
+
+export interface BuiltinSfx {
+  id: string
+  name: string
+  fileName: string
+  durationMs: number
+  description: string
+}
 
 export interface EditorSettings {
   captionStyle: CaptionStyleId
@@ -31,6 +65,10 @@ export interface EditorSettings {
   musicAssetId: string | null
   musicVolumeDb: number
   duckMusic: boolean
+  /** Color grading filter applied project-wide unless overridden per clip. */
+  filter?: FilterId
+  /** Custom Ken Burns camera framing per clip id. */
+  clipFraming?: Record<string, CameraCustomFraming>
   /** Logos, watermarks and text placed over the video. */
   overlays: Overlay[]
   /** Volume change for all narration, in dB. */
@@ -41,6 +79,20 @@ export interface EditorSettings {
   musicInMs?: number
   /** Last prompt written for making background music in an outside AI (Suno, Udio, …). */
   musicPrompt?: MusicPrompt | null
+  /** Sound effects (SFX) placed along the timeline. */
+  sfx?: SfxItem[]
+}
+
+export interface YoutubeMetadata {
+  titles: string[]
+  description: string
+  chapters: string
+  hashtags: string[]
+  thumbnailConcept: {
+    prompt: string
+    composition: string
+    textHook: string
+  }
 }
 
 export interface MusicPrompt {
@@ -123,6 +175,8 @@ export interface Character {
   description: string
   sheetAssetId: string | null
   sort: number
+  ttsVoice?: string | null
+  ttsProvider?: TtsProvider | null
 }
 
 export interface Clip {
@@ -156,12 +210,16 @@ export interface Clip {
   voiceInMs: number
   voiceOutMs: number | null
   voiceStartMs: number
+  /** Character assigned to speak this scene; null uses the project narrator. */
+  speakerId: string | null
+  /** Color grading mood filter. */
+  filter: FilterId
   imageAssetId: string | null
   videoAssetId: string | null
   audioAssetId: string | null
 }
 
-export type AssetKind = 'image' | 'video' | 'audio' | 'music' | 'overlay' | 'export'
+export type AssetKind = 'image' | 'video' | 'audio' | 'music' | 'sfx' | 'overlay' | 'export'
 
 export interface WordTiming {
   text: string

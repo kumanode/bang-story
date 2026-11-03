@@ -33,6 +33,9 @@ dalam transaksi, lalu `user_version` dinaikkan.
 | 5 | `projects.video_resolution` |
 | 6 | `clips.video_camera`, `video_strength`, `transition_ms`, `voice_gain_db` |
 | 7 | `clips.media_in_ms`, `voice_in_ms`, `voice_out_ms`, `voice_start_ms` |
+| 8 | `clips.filter` |
+| 9 | `characters.tts_voice` |
+| 10 | `clips.speaker_id`, `characters.tts_provider` |
 
 **Aturan:** tambahkan migrasi baru di akhir. Jangan mengubah migrasi yang sudah ada, karena pengguna lama sudah
 menjalankannya.
@@ -43,7 +46,7 @@ menjalankannya.
 |---|---|
 | `title`, `synopsis` | judul (diisi AI saat menulis naskah) dan ide cerita |
 | `durationSec`, `language`, `aspectRatio` | target durasi, bahasa naskah/suara, `16:9` atau `9:16` |
-| `styleId` | gaya visual (`src/shared/styles.ts`, 20 gaya) |
+| `styleId` | gaya visual (`src/shared/styles.ts`, 24 gaya) |
 | `ttsProvider`, `ttsVoice` | `gemini` atau `elevenlabs` + ID suara |
 | `imageModel`, `videoModel`, `videoResolution` | model Higgsfield per proyek (null = bawaan aplikasi) |
 | `status`, `step` | `draft`/`script`/`storyboard`/`editing`/`exported`; langkah 1 Ide, 2 Naskah, 3 Storyboard, 4 Editor |
@@ -70,6 +73,7 @@ Satu klip = satu adegan: gambar atau video, suara narasinya, dan geraknya.
 | `voiceGainDb` | volume suara klip ini (dB) |
 | `mediaInMs` | titik mulai video di dalam filenya (tepi kiri klip video yang ditarik) |
 | `voiceInMs`, `voiceOutMs`, `voiceStartMs` | potongan suara: bagian file yang dipakai (`out` null = sampai akhir) dan posisinya dari awal klip |
+| `speakerId` | pemeran yang berbicara di adegan ini; `null` memakai narator proyek. `characterIds` tetap hanya menandai pemeran yang tampil |
 | `imageAssetId`, `videoAssetId`, `audioAssetId` | aset aktif (dimiliki proses utama, tidak ikut snapshot) |
 
 Aturan potongan suara ada di `voiceSpan()` (`src/shared/timeline.ts`): suara yang melewati akhir klip dipotong.
@@ -91,7 +95,7 @@ Tambahkan di semua tempat berikut, atau data akan hilang diam-diam:
 
 | Properti | Arti |
 |---|---|
-| `kind` | `image`, `video`, `audio`, `music`, `overlay`, `export` |
+| `kind` | `image`, `video`, `audio`, `music`, `sfx`, `overlay`, `export` |
 | `clipId` / `characterId` | pemiliknya (riwayat versi per klip/pemeran) |
 | `provider`, `model`, `prompt` | asal file; untuk audio narasi `prompt` = teks narasi saat direkam |
 | `remoteId`, `remoteUrl` | ID permintaan dan URL hasil di Higgsfield |
@@ -111,6 +115,8 @@ Tambahkan di semua tempat berikut, atau data akan hilang diam-diam:
 
 `meta.uploadedUrl`/`uploadedAt` dipakai untuk menggunakan ulang file yang sudah diunggah ke Higgsfield.
 
+Suara karakter disimpan bersama `ttsProvider`. Suara itu hanya dipakai jika providernya sama dengan provider TTS proyek; jika berbeda, adegan memakai suara narator.
+
 Narasi dianggap **basi** (perlu direkam ulang) kalau `asset.prompt` berbeda dari `clip.narration`.
 
 ## Pengaturan editor (`EditorSettings`, di `projects.editor_json`)
@@ -124,8 +130,13 @@ Narasi dianggap **basi** (perlu direkam ulang) kalau `asset.prompt` berbeda dari
 | `voiceVolumeDb` | volume semua narasi |
 | `overlays` | logo/gambar dan teks di atas video (`Overlay[]`) |
 | `musicPrompt` | prompt musik AI terakhir (untuk Suno dll.) |
+| `filter` | filter bawaan klip baru; filter klip yang sudah ada tetap disimpan per klip |
+| `sfx` | daftar efek suara: aset, posisi/potongan timeline, dan volume per item |
+| `clipFraming` | framing Ken Burns kustom berdasarkan ID klip |
 
 Properti opsional baru di `EditorSettings` tidak butuh migrasi; berikan nilai bawaan saat dibaca (`?? 0`).
+
+Saat `duplicateProject()` menyalin `editor_json`, remap semua ID aset dan klip: musik, gambar overlay, SFX, dan kunci `clipFraming`. Kerjakan setelah semua aset dan klip disalin agar peta ID lengkap.
 
 ## Pengaturan aplikasi (`AppSettings`, tabel `settings`)
 

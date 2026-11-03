@@ -1,14 +1,36 @@
 import { useLayoutEffect, useRef, useState, type PointerEvent, type ReactNode } from 'react'
-import { Film, Image as ImageIcon, Layers, Mic, Music, Scissors, Trash2, Type, ZoomIn } from 'lucide-react'
+import {
+  AudioLines,
+  Eye,
+  EyeOff,
+  Film,
+  Image as ImageIcon,
+  Layers,
+  Lock,
+  Mic,
+  Music,
+  Plus,
+  Redo2,
+  Scissors,
+  Trash2,
+  Type,
+  Undo2,
+  Unlock,
+  Volume2,
+  VolumeX,
+  X,
+  ZoomIn
+} from 'lucide-react'
 import type { CaptionChunk } from '@shared/captions'
 import { overlayEnd } from '@shared/overlays'
+import { BUILTIN_SFX } from '@shared/sfx'
 import { MIN_ITEM_MS, musicSpan, voiceSpan } from '@shared/timeline'
-import type { Asset, EditorSettings, Overlay, WordTiming } from '@shared/types'
+import type { Asset, EditorSettings, Overlay, SfxItem, WordTiming } from '@shared/types'
 import { cx } from '../../../components/ui'
 import { errorText, timecode } from '../../../lib/format'
 import { useApp } from '../../../store/app'
 import { useProject } from '../../../store/project'
-import { UNKNOWN_AUDIO_MS, updateOverlay, usePlayback, voiceWindow, type TimelineItem } from './engine'
+import { UNKNOWN_AUDIO_MS, updateOverlay, usePlayback, useTrackControls, voiceWindow, type TimelineItem } from './engine'
 import { TransitionButton } from './TransitionButton'
 import { Waveform } from './Waveform'
 
@@ -30,6 +52,7 @@ export type TimelinePick =
   | { kind: 'voice'; id: string }
   | { kind: 'caption'; chunk: CaptionChunk }
   | { kind: 'music' }
+  | { kind: 'sfx'; id: string }
   | { kind: 'overlay'; id: string }
   | { kind: 'transition'; id: string }
 
@@ -38,6 +61,7 @@ export type TimelineSelection =
   | { kind: 'clip' | 'voice' | 'overlay' | 'transition'; id: string }
   | { kind: 'caption'; key: string; from: number }
   | { kind: 'music' }
+  | { kind: 'sfx'; id: string }
   | null
 
 type Placed = { o: Overlay; start: number; end: number }
@@ -91,17 +115,39 @@ function Playhead({ pps }: { pps: number }) {
 }
 
 /** One track: a label that stays put while the timeline scrolls sideways, and the items on the time axis. */
-function Row({ label, icon, height, children }: { label: string; icon?: ReactNode; height: number; children?: ReactNode }) {
+function Row({
+  label,
+  icon,
+  height,
+  action,
+  onDrop,
+  onDragOver,
+  trackId,
+  children
+}: {
+  label: string
+  icon?: ReactNode
+  height: number
+  action?: ReactNode
+  onDrop?: (e: React.DragEvent<HTMLDivElement>) => void
+  onDragOver?: (e: React.DragEvent<HTMLDivElement>) => void
+  trackId?: string
+  children?: ReactNode
+}) {
   return (
     <div className="flex" style={{ height: height + ROW_GAP }}>
       <div
-        className="sticky left-0 z-20 flex shrink-0 items-start gap-2 bg-surface pl-4 text-[13px] font-semibold"
-        style={{ width: LABEL_W, marginRight: PAD, paddingTop: Math.max(0, (height - 20) / 2) }}
+        className="sticky left-0 z-20 flex shrink-0 items-center justify-between gap-1 bg-surface pl-4 pr-2 text-[13px] font-semibold"
+        style={{ width: LABEL_W, marginRight: PAD, height }}
       >
-        {icon}
-        <span className="truncate">{label}</span>
+        <div className="flex min-w-0 items-center gap-1.5 truncate">
+          {icon}
+          <span className="truncate">{label}</span>
+        </div>
+        {action}
+        {trackId && <button type="button" aria-label={`${useTrackControls.getState().lockedTracks[trackId] ? 'Buka kunci' : 'Kunci'} track ${label}`} title={useTrackControls.getState().lockedTracks[trackId] ? 'Buka kunci track' : 'Kunci track'} onClick={(e) => { e.stopPropagation(); useTrackControls.getState().toggleTrackLock(trackId) }} className="flex size-5 items-center justify-center rounded text-muted hover:bg-sand-2 hover:text-ink">{useTrackControls.getState().lockedTracks[trackId] ? <Lock className="size-3.5 text-accent-dark" /> : <Unlock className="size-3.5" />}</button>}
       </div>
-      <div className="relative flex-1 self-start" style={{ height }}>
+      <div className="relative flex-1 self-start" style={{ height }} data-track-locked={trackId && useTrackControls.getState().lockedTracks[trackId] ? 'true' : 'false'} onDrop={onDrop} onDragOver={onDragOver}>
         {children}
       </div>
     </div>
@@ -148,9 +194,136 @@ export function Timeline({
   const [width, setWidth] = useState(1000)
   const [zoom, setZoom] = useState(1)
   const seek = usePlayback((s) => s.seek)
+  const project = useProject((s) => s.project)
   const updateClip = useProject((s) => s.updateClip)
   const updateEditor = useProject((s) => s.updateEditor)
+  const undo = useProject((s) => s.undo)
+  const redo = useProject((s) => s.redo)
+  const canUndo = useProject((s) => s.canUndo)
+  const canRedo = useProject((s) => s.canRedo)
+  const { voiceMuted, musicMuted, sfxMuted, captionsHidden, overlaysHidden, lockedTracks, toggleVoiceMute, toggleMusicMute, toggleSfxMute, toggleCaptionsHide, toggleOverlaysHide } =
+    useTrackControls()
   const { toast } = useApp()
+  const [showSfxMenu, setShowSfxMenu] = useState(false)
+
+  const addBuiltinSfx = async (sfxId: string) => {
+    if (!project) return
+    setShowSfxMenu(false)
+    try {
+      const asset = await window.api.assets.addBuiltinSfx(project.id, sfxId)
+      useProject.getState().addAsset(asset)
+      const currentT = usePlayback.getState().t
+      const sfxItem: SfxItem = {
+        id: crypto.randomUUID(),
+        assetId: asset.id,
+        name: asset.prompt ?? 'SFX',
+        startMs: Math.round(currentT * 1000),
+        durationMs: asset.durationMs ?? 1000,
+        volumeDb: 0
+      }
+      updateEditor({ sfx: [...(project.editor.sfx ?? []), sfxItem] })
+      toast('info', `SFX "${sfxItem.name}" ditambahkan pada ${timecode(currentT)}`)
+    } catch (e) {
+      toast('error', errorText(e))
+    }
+  }
+
+  const addCustomSfx = async () => {
+    if (!project) return
+    setShowSfxMenu(false)
+    try {
+      const asset = await window.api.assets.pickSfx(project.id)
+      if (!asset) return
+      useProject.getState().addAsset(asset)
+      const currentT = usePlayback.getState().t
+      const sfxItem: SfxItem = {
+        id: crypto.randomUUID(),
+        assetId: asset.id,
+        name: asset.prompt ?? 'SFX',
+        startMs: Math.round(currentT * 1000),
+        durationMs: asset.durationMs ?? 1000,
+        volumeDb: 0
+      }
+      updateEditor({ sfx: [...(project.editor.sfx ?? []), sfxItem] })
+      toast('info', `SFX "${sfxItem.name}" ditambahkan pada ${timecode(currentT)}`)
+    } catch (e) {
+      toast('error', errorText(e))
+    }
+  }
+
+  const dropSfx = async (e: React.DragEvent<HTMLDivElement>): Promise<void> => {
+    e.preventDefault()
+    if (!project || lockedTracks.sfx) return
+    const files = [...e.dataTransfer.files].filter((file) => /\.(wav|mp3|ogg|m4a)$/i.test(file.name))
+    if (!files.length) return
+    for (const file of files) {
+      try {
+        const asset = await window.api.assets.importSfx(project.id, window.api.assets.getPathForFile(file))
+        useProject.getState().addAsset(asset)
+        const current = useProject.getState().project?.editor.sfx ?? []
+        const startMs = Math.round(usePlayback.getState().t * 1000)
+        const item: SfxItem = { id: crypto.randomUUID(), assetId: asset.id, name: asset.prompt ?? file.name, startMs, durationMs: asset.durationMs ?? 1000, inMs: 0, volumeDb: 0 }
+        useProject.getState().updateEditor({ sfx: [...current, item] })
+      } catch (error) {
+        toast('error', errorText(error))
+      }
+    }
+  }
+
+  const removeSfx = (id: string) => {
+    if (lockedTracks.sfx) return
+    if (!project) return
+    const updated = (project.editor.sfx ?? []).filter((s) => s.id !== id)
+    updateEditor({ sfx: updated })
+  }
+
+  const startSfxDrag = (e: React.PointerEvent, sfxItem: SfxItem, mode: Mode = 'move') => {
+    e.stopPropagation()
+    if (lockedTracks.sfx) return
+    const startX = e.clientX
+    const initStart = sfxItem.startMs
+    const initIn = sfxItem.inMs ?? 0
+    const initDuration = sfxItem.durationMs
+    let moved = false
+    const snapMs = (ms: number): number => {
+      const candidates = [0, total * 1000, usePlayback.getState().t * 1000, ...items.flatMap((it) => [it.start * 1000, it.end * 1000])]
+      const near = candidates.find((x) => Math.abs(x - ms) <= SNAP_PX / pps * 1000)
+      return Math.round(near ?? ms)
+    }
+    const onMove = (ev: globalThis.PointerEvent) => {
+      const deltaMs = ((ev.clientX - startX) / pps) * 1000
+      if (Math.abs(deltaMs) > 3 && !moved) {
+        moved = true
+        useProject.getState().beginHistoryGesture()
+      }
+      if (!moved) return
+      const updated = (project?.editor.sfx ?? []).map((x) => {
+        if (x.id !== sfxItem.id) return x
+        if (mode === 'left') {
+          const delta = clamp(snapMs(initStart + deltaMs) - initStart, -initIn, initDuration - MIN_ITEM_MS)
+          return { ...x, startMs: initStart + delta, inMs: initIn + delta, durationMs: initDuration - delta }
+        }
+        if (mode === 'right') {
+          // Past the end of its file a sound effect is only silence, so the block stops where the sound does.
+          const fileMs = assets[sfxItem.assetId]?.durationMs
+          const soundEnd = fileMs ? initStart + fileMs - initIn : Infinity
+          const end = clamp(snapMs(initStart + initDuration + deltaMs), initStart + MIN_ITEM_MS, Math.max(initStart + MIN_ITEM_MS, Math.min(total * 1000, soundEnd)))
+          return { ...x, durationMs: end - initStart }
+        }
+        const newStart = clamp(snapMs(initStart + deltaMs), 0, Math.max(0, total * 1000 - initDuration))
+        return { ...x, startMs: newStart }
+      })
+      useProject.getState().applyEditor({ sfx: updated })
+    }
+    const onUp = () => {
+      window.removeEventListener('pointermove', onMove)
+      window.removeEventListener('pointerup', onUp)
+      if (moved) useProject.getState().endHistoryGesture()
+      if (!moved) pick({ kind: 'sfx', id: sfxItem.id }, sfxItem.startMs / 1000)
+    }
+    window.addEventListener('pointermove', onMove)
+    window.addEventListener('pointerup', onUp)
+  }
   // While dragging, the scale stays as it was when the drag began, so a clip that grows does not shrink the view.
   const [frozenPps, setFrozenPps] = useState<number | null>(null)
   const [badge, setBadge] = useState<{ x: number; y: number; text: string } | null>(null)
@@ -207,6 +380,7 @@ export function Timeline({
     if (!d) return
     if (d.moved) {
       if (!cancel) d.session?.end?.()
+      useProject.getState().endHistoryGesture()
       setFrozenPps(null)
       setBadge(null)
     } else if (!cancel) d.spec.click()
@@ -214,6 +388,7 @@ export function Timeline({
   const on = (spec: DragSpec, mode: Mode) => ({
     onPointerDown: (e: PointerEvent<HTMLElement>) => {
       e.stopPropagation()
+      if (e.currentTarget.closest('[data-track-locked="true"]')) { e.preventDefault(); return }
       if (e.button !== 0) return
       try {
         e.currentTarget.setPointerCapture(e.pointerId)
@@ -229,6 +404,7 @@ export function Timeline({
       if (!d.moved) {
         if (Math.abs(dx) < 4) return
         d.moved = true
+        useProject.getState().beginHistoryGesture()
         d.session = d.spec.begin(d.mode)
         setFrozenPps(d.pps)
       }
@@ -346,7 +522,7 @@ export function Timeline({
           setCapDrag(null)
           const asset = assets[src.key]
           if (!asset || (start === c.start && end === c.end)) return
-          window.api.assets.setWords(asset.id, retimedWords(asset.meta.words ?? [], c, start, end)).catch((e) => toast('error', errorText(e)))
+          useProject.getState().editWords(asset.id, retimedWords(asset.meta.words ?? [], c, start, end)).catch((e) => toast('error', errorText(e)))
         }
       }
     }
@@ -418,6 +594,14 @@ export function Timeline({
           <Trash2 className="size-4" />
           Hapus
         </button>
+        <button type="button" className={btn} disabled={!canUndo} onClick={undo} title="Batalkan aksi terakhir (Ctrl+Z)">
+          <Undo2 className="size-4" />
+          Undo
+        </button>
+        <button type="button" className={btn} disabled={!canRedo} onClick={redo} title="Ulangi aksi (Ctrl+Y / Ctrl+Shift+Z)">
+          <Redo2 className="size-4" />
+          Redo
+        </button>
         <span className="ml-2 min-w-0 truncate">Klik untuk memilih, tarik tepinya untuk mengubah durasi, geser untuk memindahkan.</span>
         <span className="flex-1" />
         <label className="flex shrink-0 items-center gap-2">
@@ -445,7 +629,7 @@ export function Timeline({
             ))}
           </Row>
 
-          <Row label="Klip" icon={<ImageIcon className="size-4" />} height={64}>
+          <Row label="Klip" icon={<ImageIcon className="size-4" />} height={64} trackId="clips">
             {items.map((it) => {
               const spec = clipSpec(it)
               const videoLeft = it.clip.motionType === 'video' && it.video?.durationMs ? it.video.durationMs - (it.clip.mediaInMs ?? 0) : null
@@ -456,7 +640,7 @@ export function Timeline({
                   role="button"
                   tabIndex={0}
                   {...on(spec, 'move')}
-                  onKeyDown={(e) => e.key === 'Enter' && spec.click()}
+                  onKeyDown={(e) => e.key === 'Enter' && !e.currentTarget.closest('[data-track-locked="true"]') && spec.click()}
                   aria-label={`Klip ${it.index + 1} ${it.clip.title}`}
                   aria-pressed={is('clip', it.clip.id)}
                   className={cx(
@@ -472,12 +656,28 @@ export function Timeline({
                   <span className="pointer-events-none flex items-center gap-1 self-start">
                     <span className="rounded-[5px] border border-ink bg-surface px-1 font-mono text-[11px]">{String(it.index + 1).padStart(2, '0')}</span>
                     {it.clip.motionType === 'video' && it.video && (
-                      <span className="flex size-[18px] items-center justify-center rounded-[5px] bg-ink text-paper">
+                      <span className="flex size-[18px] items-center justify-center rounded-[5px] bg-ink text-paper" title="Video AI">
                         <Film className="size-3" />
                       </span>
                     )}
+                    {it.audio && (
+                      <span
+                        className={cx(
+                          'rounded-[4px] px-1 font-mono text-[9px] font-bold shadow-sm',
+                          it.audio.meta.words?.length && !it.audio.meta.estimatedTimings
+                            ? 'border border-ok-soft bg-ok-soft text-ok-ink'
+                            : 'border border-sun-soft bg-sun-soft text-sun-ink'
+                        )}
+                        title={it.audio.meta.words?.length && !it.audio.meta.estimatedTimings ? 'Caption sinkron (Whisper)' : 'Caption estimasi'}
+                      >
+                        {it.audio.meta.words?.length && !it.audio.meta.estimatedTimings ? 'SYNC' : 'EST'}
+                      </span>
+                    )}
                   </span>
-                  <span className="pointer-events-none max-w-full truncate rounded bg-surface/85 px-1 text-xs font-semibold">{it.clip.title}</span>
+                  <div className="pointer-events-none flex w-full items-end justify-between gap-1">
+                    <span className="max-w-[70%] truncate rounded bg-surface/85 px-1 text-xs font-semibold">{it.clip.title}</span>
+                    <span className="rounded bg-ink/75 px-1 font-mono text-[10px] text-paper">{secs(it.clip.durationMs)}</span>
+                  </div>
                   {held > 0 && (
                     <span
                       title="Videonya sudah habis di sini; frame terakhirnya ditahan"
@@ -502,7 +702,33 @@ export function Timeline({
             ))}
           </Row>
 
-          <Row label="Caption" icon={<Type className="size-4" />} height={30}>
+          <Row
+            label="Caption"
+            icon={<Type className="size-4" />}
+            height={30}
+            trackId="captions"
+            onDragOver={(e) => {
+              if ([...e.dataTransfer.types].includes('Files')) e.preventDefault()
+            }}
+            onDrop={(e) => void dropSfx(e)}
+            action={
+              <button
+                type="button"
+                aria-label={captionsHidden ? 'Tampilkan caption' : 'Sembunyikan caption'}
+                title={captionsHidden ? 'Tampilkan caption' : 'Sembunyikan caption'}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  toggleCaptionsHide()
+                }}
+                className={cx(
+                  'flex size-5 items-center justify-center rounded transition-colors',
+                  captionsHidden ? 'text-accent hover:bg-sun-soft' : 'text-muted hover:text-ink'
+                )}
+              >
+                {captionsHidden ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+              </button>
+            }
+          >
             {chunks.map((c, i) => {
               const selected = !!c.source && selection?.kind === 'caption' && selection.key === c.source.key && selection.from === c.source.from
               const live = capDrag && c.source && capDrag.key === c.source.key && capDrag.from === c.source.from ? capDrag : null
@@ -516,11 +742,11 @@ export function Timeline({
                   role="button"
                   tabIndex={0}
                   {...on(spec, 'move')}
-                  onKeyDown={(e) => e.key === 'Enter' && spec.click()}
+                  onKeyDown={(e) => e.key === 'Enter' && !e.currentTarget.closest('[data-track-locked="true"]') && spec.click()}
                   title={`${text} (klik untuk edit teks)`}
                   aria-pressed={selected}
                   className={cx(
-                    'absolute top-0 flex h-[30px] cursor-pointer select-none items-center overflow-hidden whitespace-nowrap rounded-md border border-[#E3C46A] bg-sun-soft px-1.5 text-xs text-sun-ink hover:border-sun-ink',
+                    'absolute top-0 flex h-[30px] cursor-pointer select-none items-center overflow-hidden whitespace-nowrap rounded-md border border-sun-soft bg-sun-soft px-1.5 text-xs text-sun-ink hover:border-sun-ink',
                     selected && SELECTED
                   )}
                   style={{ left: start * pps + 1, width: Math.max(4, (end - start) * pps - 2) }}
@@ -532,7 +758,29 @@ export function Timeline({
             })}
           </Row>
 
-          <Row label="Suara TTS" icon={<Mic className="size-4" />} height={40}>
+          <Row
+            label="Suara TTS"
+            icon={<Mic className="size-4" />}
+            height={40}
+            trackId="voice"
+            action={
+              <button
+                type="button"
+                aria-label={voiceMuted ? 'Bunyikan suara' : 'Bisukan suara'}
+                title={voiceMuted ? 'Bunyikan suara' : 'Bisukan suara'}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  toggleVoiceMute()
+                }}
+                className={cx(
+                  'flex size-5 items-center justify-center rounded transition-colors',
+                  voiceMuted ? 'text-accent hover:bg-sun-soft' : 'text-muted hover:text-ink'
+                )}
+              >
+                {voiceMuted ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
+              </button>
+            }
+          >
             {items.map((it) => {
               if (!it.audio) return null
               const span = voiceSpan(it.clip, it.audio.durationMs ?? UNKNOWN_AUDIO_MS)
@@ -545,7 +793,7 @@ export function Timeline({
                   role="button"
                   tabIndex={0}
                   {...on(spec, 'move')}
-                  onKeyDown={(e) => e.key === 'Enter' && spec.click()}
+                  onKeyDown={(e) => e.key === 'Enter' && !e.currentTarget.closest('[data-track-locked="true"]') && spec.click()}
                   aria-label={`Suara klip ${it.index + 1}`}
                   aria-pressed={is('voice', it.clip.id)}
                   className={cx(
@@ -567,17 +815,39 @@ export function Timeline({
             })}
           </Row>
 
-          <Row label="Musik" icon={<Music className="size-4" />} height={30}>
+          <Row
+            label="Musik"
+            icon={<Music className="size-4" />}
+            height={30}
+            trackId="music"
+            action={
+              <button
+                type="button"
+                aria-label={musicMuted ? 'Bunyikan musik' : 'Bisukan musik'}
+                title={musicMuted ? 'Bunyikan musik' : 'Bisukan musik'}
+                onClick={(e) => {
+                  e.stopPropagation()
+                  toggleMusicMute()
+                }}
+                className={cx(
+                  'flex size-5 items-center justify-center rounded transition-colors',
+                  musicMuted ? 'text-accent hover:bg-sun-soft' : 'text-muted hover:text-ink'
+                )}
+              >
+                {musicMuted ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
+              </button>
+            }
+          >
             {music && (
               <div
                 role="button"
                 tabIndex={0}
                 {...on(musicSpec, 'move')}
-                onKeyDown={(e) => e.key === 'Enter' && musicSpec.click()}
+                onKeyDown={(e) => e.key === 'Enter' && !e.currentTarget.closest('[data-track-locked="true"]') && musicSpec.click()}
                 aria-pressed={is('music')}
                 aria-label="Musik latar"
                 className={cx(
-                  'absolute top-0 flex h-[30px] cursor-pointer select-none items-center gap-2 overflow-hidden whitespace-nowrap rounded-md border border-[#9CC596] bg-ok-soft px-2.5 text-xs text-ok-ink hover:border-ok-ink',
+                  'absolute top-0 flex h-[30px] cursor-pointer select-none items-center gap-2 overflow-hidden whitespace-nowrap rounded-md border border-ok-soft bg-ok-soft px-2.5 text-xs text-ok-ink hover:border-ok-ink',
                   is('music') && SELECTED
                 )}
                 style={{ left: ms.startSec * pps + 1, width: Math.max(10, (ms.endSec - ms.startSec) * pps - 2) }}
@@ -589,8 +859,134 @@ export function Timeline({
             )}
           </Row>
 
+          <Row
+            label="Efek Suara"
+            icon={<AudioLines className="size-4" />}
+            height={30}
+            trackId="sfx"
+            action={
+              <div className="relative flex items-center gap-1">
+                <button
+                  type="button"
+                  aria-label={sfxMuted ? 'Bunyikan efek suara' : 'Bisukan efek suara'}
+                  title={sfxMuted ? 'Bunyikan efek suara' : 'Bisukan efek suara'}
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    toggleSfxMute()
+                  }}
+                  className={cx(
+                    'flex size-5 items-center justify-center rounded transition-colors',
+                    sfxMuted ? 'text-accent hover:bg-sun-soft' : 'text-muted hover:text-ink'
+                  )}
+                >
+                  {sfxMuted ? <VolumeX className="size-3.5" /> : <Volume2 className="size-3.5" />}
+                </button>
+                <button
+                  type="button"
+                  aria-label="Tambah efek suara"
+                  title="Tambah efek suara pada playhead"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    setShowSfxMenu((prev) => !prev)
+                  }}
+                  className="flex size-5 items-center justify-center rounded text-muted hover:bg-sand-2 hover:text-ink transition-colors"
+                >
+                  <Plus className="size-3.5" />
+                </button>
+                {showSfxMenu && (
+                  <div
+                    className="absolute left-0 top-6 z-50 w-56 rounded-lg border border-line bg-paper p-1.5 shadow-xl"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted">
+                      Pustaka SFX Bawaan
+                    </div>
+                    {BUILTIN_SFX.map((s) => (
+                      <button
+                        key={s.id}
+                        type="button"
+                        onClick={() => addBuiltinSfx(s.id)}
+                        className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs text-ink hover:bg-sand-2"
+                      >
+                        <span className="font-medium">{s.name}</span>
+                        <span className="text-[10px] text-muted">{(s.durationMs / 1000).toFixed(1)}s</span>
+                      </button>
+                    ))}
+                    <div className="my-1 border-t border-line" />
+                    <button
+                      type="button"
+                      onClick={addCustomSfx}
+                      className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-xs font-semibold text-accent-dark hover:bg-accent/10"
+                    >
+                      <Plus className="size-3.5" />
+                      <span>Unggah File Sendiri...</span>
+                    </button>
+                  </div>
+                )}
+              </div>
+            }
+          >
+            {(project?.editor.sfx ?? []).map((s) => (
+              <div
+                key={s.id}
+                role="button"
+                tabIndex={0}
+                onPointerDown={(e) => startSfxDrag(e, s)}
+                onClick={(e) => { if (!e.currentTarget.closest('[data-track-locked="true"]')) onPick({ kind: 'sfx', id: s.id }) }}
+                className={cx('group absolute top-0 flex h-[30px] cursor-grab select-none items-center gap-1.5 overflow-hidden whitespace-nowrap rounded-md border bg-sun-soft px-2 text-xs text-sun-ink shadow-xs hover:border-sun-ink active:cursor-grabbing', is('sfx', s.id) ? SELECTED : 'border-line-2')}
+                style={{
+                  left: (s.startMs / 1000) * pps + 1,
+                  width: Math.max(36, (s.durationMs / 1000) * pps - 2)
+                }}
+                title={`${s.name} (${(s.durationMs / 1000).toFixed(1)}s) - Geser untuk memindahkan`}
+              >
+                <span aria-hidden className="absolute inset-y-0 left-0 z-[2] w-2 cursor-ew-resize bg-transparent hover:bg-ink/20" onPointerDown={(e) => startSfxDrag(e, s, 'left')} />
+                <AudioLines className="pointer-events-none size-3.5 shrink-0 text-sun-ink" />
+                <span className="pointer-events-none truncate font-medium">{s.name}</span>
+                <span aria-hidden className="absolute inset-y-0 right-0 z-[2] w-2 cursor-ew-resize bg-transparent hover:bg-ink/20" onPointerDown={(e) => startSfxDrag(e, s, 'right')} />
+                <button
+                  type="button"
+                  aria-label="Hapus SFX"
+                  onClick={(e) => {
+                    e.stopPropagation()
+                    removeSfx(s.id)
+                  }}
+                  onPointerDown={(e) => e.stopPropagation()}
+                  className="ml-auto rounded p-0.5 opacity-0 transition-opacity hover:text-red-600 group-hover:opacity-100"
+                >
+                  <X className="size-3" />
+                </button>
+              </div>
+            ))}
+          </Row>
+
           {(lanes.length ? lanes : [[]]).map((lane, li) => (
-            <Row key={li} label={li === 0 ? 'Overlay' : `Overlay ${li + 1}`} icon={<Layers className="size-4" />} height={30}>
+            <Row
+              key={li}
+              label={li === 0 ? 'Overlay' : `Overlay ${li + 1}`}
+              icon={<Layers className="size-4" />}
+              height={30}
+              trackId="overlays"
+              action={
+                li === 0 ? (
+                  <button
+                    type="button"
+                    aria-label={overlaysHidden ? 'Tampilkan overlay' : 'Sembunyikan overlay'}
+                    title={overlaysHidden ? 'Tampilkan overlay' : 'Sembunyikan overlay'}
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      toggleOverlaysHide()
+                    }}
+                    className={cx(
+                      'flex size-5 items-center justify-center rounded transition-colors',
+                      overlaysHidden ? 'text-accent hover:bg-sun-soft' : 'text-muted hover:text-ink'
+                    )}
+                  >
+                    {overlaysHidden ? <EyeOff className="size-3.5" /> : <Eye className="size-3.5" />}
+                  </button>
+                ) : undefined
+              }
+            >
               {lane.map(({ o, start, end }) => {
                 const label = o.kind === 'text' ? o.text.split('\n')[0] || 'Teks' : (assets[o.assetId]?.prompt ?? 'Gambar')
                 const spec = overlaySpec(o, start, end)
@@ -600,7 +996,7 @@ export function Timeline({
                     role="button"
                     tabIndex={0}
                     {...on(spec, 'move')}
-                    onKeyDown={(e) => e.key === 'Enter' && spec.click()}
+                    onKeyDown={(e) => e.key === 'Enter' && !e.currentTarget.closest('[data-track-locked="true"]') && spec.click()}
                     aria-pressed={is('overlay', o.id)}
                     title={label}
                     className={cx(

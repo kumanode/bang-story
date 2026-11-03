@@ -165,7 +165,7 @@ async function referenceUrls(model: HfModel, chars: Character[], signal: AbortSi
 // ---------- finishing a Higgsfield request (also used to resume after a restart) ----------
 
 interface HfPayload {
-  target: 'clip-image' | 'sheet' | 'clip-video'
+  target: 'clip-image' | 'sheet' | 'clip-video' | 'thumbnail'
   model: string
   prompt: string
 }
@@ -199,7 +199,9 @@ async function finishHiggsfield(ctx: TaskCtx, job: Job, requestId: string, paylo
     localPath: rel,
     durationMs,
     width: size?.width ?? null,
-    height: size?.height ?? null
+    height: size?.height ?? null,
+    // Thumbnails have no clip; the flag is how the export dialog finds them again.
+    meta: payload.target === 'thumbnail' ? { thumbnail: true } : undefined
   })
   emit.asset(asset)
   if (payload.target === 'sheet' && job.characterId) {
@@ -318,6 +320,35 @@ export function generateClipImage(clipId: string): Job {
       endpoint: model.id,
       body: imageBody(model, prompt, project.aspectRatio, refs.urls),
       payload: { target: 'clip-image', model: model.id, prompt }
+    }
+  })
+}
+
+export function generateThumbnail(projectId: string, prompt: string, variation: number): Job {
+  const project = getProject(projectId)
+  const variedPrompt = `${prompt.trim()}\nVariation ${variation}: create a distinct composition and facial expression while preserving the story concept.`
+  if (isFlow2Api()) {
+    const job = insertJob({ projectId, kind: 'image', provider: 'flow2api', payload: { target: 'thumbnail', variation } })
+    emit.job(job)
+    return runJob(job, 'flow2api', async (ctx) => {
+      const baseModel = (project.imageModel && !project.imageModel.includes('/') ? project.imageModel : null) ?? getSettings().flow2apiImageModel
+      const modelId = resolveFlow2ApiModelId(baseModel, '16:9')
+      const { mediaUrl } = await f2a.generateImage({ prompt: variedPrompt, model: modelId, referenceImages: [], signal: ctx.signal, onProgress: (progress, message) => ctx.progress(progress, message) })
+      const { bytes, contentType } = await downloadTo(mediaUrl, ctx.signal)
+      const rel = saveFile(projectId, 'images', extFromType(contentType, mediaUrl, '.png'), bytes)
+      const size = await probeSize(assetAbsPath(projectId, rel))
+      const asset = insertAsset({ projectId, kind: 'image', provider: 'flow2api', model: modelId, prompt: variedPrompt, remoteUrl: mediaUrl, localPath: rel, width: size?.width ?? null, height: size?.height ?? null, meta: { thumbnail: true } })
+      emit.asset(asset)
+      return asset.id
+    })
+  }
+  const job = insertJob({ projectId, kind: 'image', provider: 'higgsfield', payload: { target: 'thumbnail', variation } })
+  return startHiggsfield(job, async () => {
+    const model = getImageModel(project.imageModel)
+    return {
+      endpoint: model.id,
+      body: imageBody(model, variedPrompt, '16:9', []),
+      payload: { target: 'thumbnail', model: model.id, prompt: variedPrompt }
     }
   })
 }
@@ -482,7 +513,9 @@ export function generateClipTts(clipId: string): Job {
     let rel: string
     let words: WordTiming[] | undefined
     let estimated = false
-    const voice = p.ttsVoice || (p.ttsProvider === 'gemini' ? 'Charon' : '')
+    const char = fresh.speakerId ? charactersOf(p.id).find((c) => c.id === fresh.speakerId) : null
+    const charVoice = char?.ttsProvider === p.ttsProvider ? char.ttsVoice : null
+    const voice = charVoice || p.ttsVoice || (p.ttsProvider === 'gemini' ? 'Charon' : '')
     if (p.ttsProvider === 'elevenlabs') {
       if (!voice) throw new Error('Pilih suara ElevenLabs dulu di langkah Ide cerita.')
       const out = await eleven.speak(text, voice, p.language, ctx.signal)

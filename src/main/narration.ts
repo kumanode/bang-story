@@ -6,12 +6,13 @@ import ffmpegStatic from 'ffmpeg-static'
 import { WHISPER_TIMING, captionNeedsSync, estimateWordTimings } from '@shared/captions'
 import { estimateNarrationMs } from '@shared/script'
 import { spokenWords, stripVoiceTags } from '@shared/speech'
-import type { Clip, Job, Project, WordTiming } from '@shared/types'
+import type { Character, Clip, Job, Project, WordTiming } from '@shared/types'
 import { emit } from './events'
 import { runJob, type TaskCtx } from './jobs'
 import { assetAbsPath, binPath, dataDir } from './paths'
 import {
   activeProjectJob,
+  charactersOf,
   clipsOf,
   getAsset,
   getClip,
@@ -74,20 +75,28 @@ async function detectSilences(file: string, signal: AbortSignal): Promise<{ star
   return out
 }
 
-/** Groups scenes into takes that fit one request, keeping the script order. */
-function parts(clips: Clip[], provider: Project['ttsProvider']): Clip[][] {
+function voiceForClip(clip: Clip, chars: Character[], provider: Project['ttsProvider'], defaultVoice: string): string {
+  const c = clip.speakerId ? chars.find((ch) => ch.id === clip.speakerId && ch.ttsVoice && ch.ttsProvider === provider) : null
+  return c?.ttsVoice || defaultVoice
+}
+
+/** Groups scenes into takes that fit one request, keeping the script order and character voice consistency. */
+function parts(clips: Clip[], provider: Project['ttsProvider'], chars: Character[], defaultVoice: string): Clip[][] {
   const out: Clip[][] = []
   let cur: Clip[] = []
   let size = 0
+  let curVoice = ''
   for (const c of clips) {
     const s = provider === 'elevenlabs' ? c.narration.length : estimateNarrationMs(c.narration) / 1000
     const limit = provider === 'elevenlabs' ? ELEVEN_PART_CHARS : GEMINI_PART_SEC
-    if (cur.length && size + s > limit) {
+    const v = voiceForClip(c, chars, provider, defaultVoice)
+    if (cur.length && (size + s > limit || curVoice !== v)) {
       out.push(cur)
       cur = []
       size = 0
     }
     cur.push(c)
+    curVoice = v
     size += s
   }
   if (cur.length) out.push(cur)
@@ -251,7 +260,8 @@ export function generateNarration(projectId: string, mode: 'missing' | 'all'): J
     const voice = p.ttsVoice || (p.ttsProvider === 'gemini' ? 'Charon' : '')
     if (p.ttsProvider === 'elevenlabs' && !voice) throw new Error('Pilih suara ElevenLabs dulu di langkah Ide cerita.')
     const clips = targets.map((c) => getClip(c.id)).filter((c) => c.narration.trim())
-    const groups = parts(clips, p.ttsProvider)
+    const chars = charactersOf(projectId)
+    const groups = parts(clips, p.ttsProvider, chars, voice)
     const tmp = join(dataDir(), 'tmp', `narration-${ctx.jobId}`)
     mkdirSync(tmp, { recursive: true })
     const takeId = randomUUID()
@@ -259,22 +269,24 @@ export function generateNarration(projectId: string, mode: 'missing' | 'all'): J
       let done = 0
       for (let g = 0; g < groups.length; g++) {
         const group = groups[g]
+        const groupVoice = voiceForClip(group[0], chars, p.ttsProvider, voice)
         ctx.progress(0.05 + 0.85 * (done / clips.length), groups.length > 1 ? `Membuat suara bagian ${g + 1} dari ${groups.length}` : 'Membuat suara narasi')
         const segments =
           p.ttsProvider === 'elevenlabs'
             ? await elevenTake(
                 p,
-                voice,
+                groupVoice,
                 group,
-                { previous: groups[g - 1]?.map((c) => c.narration).join('\n\n'), next: groups[g + 1]?.map((c) => c.narration).join('\n\n') },
+                { previous: groups[g - 1] && voiceForClip(groups[g - 1][0], chars, p.ttsProvider, voice) === groupVoice ? groups[g - 1].map((c) => c.narration).join('\n\n') : undefined,
+                  next: groups[g + 1] && voiceForClip(groups[g + 1][0], chars, p.ttsProvider, voice) === groupVoice ? groups[g + 1].map((c) => c.narration).join('\n\n') : undefined },
                 tmp,
                 ctx
               )
-            : await geminiTake(p, voice, group, tmp, ctx, () =>
+            : await geminiTake(p, groupVoice, group, tmp, ctx, () =>
                 ctx.progress(0.05 + 0.85 * ((done + group.length * 0.6) / clips.length), 'Menyinkronkan caption dengan Whisper')
               )
         ctx.progress(0.05 + 0.85 * ((done + group.length * 0.9) / clips.length), 'Memotong suara per adegan')
-        for (const s of segments) store(p, s, voice, takeId, readFileSync(s.file))
+        for (const s of segments) store(p, s, groupVoice, takeId, readFileSync(s.file))
         done += group.length
       }
       touchProject(projectId)

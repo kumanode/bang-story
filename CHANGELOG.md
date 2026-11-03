@@ -8,6 +8,24 @@ Cara menaikkan versi ada di [docs/pengembangan.md](docs/pengembangan.md#versi-da
 
 ## [Belum dirilis]
 
+### Ditambahkan
+- Pembicara karakter per adegan dengan fallback ke narator bila provider TTS berbeda.
+- Track SFX dengan impor file drag & drop, pemotongan awal/akhir, volume per efek, snap, dan seleksi hapus.
+- Generator tiga variasi thumbnail 16:9 dari prompt konsep YouTube.
+- Kunci per track, tombol ekspor di header editor, serta panah untuk melangkah satu frame.
+
+### Diubah
+- Editor timeline dapat diubah ukurannya dengan batas jendela dan kontrol keyboard.
+- Undo/redo mempertahankan hasil job AI; geser slider dan item timeline menjadi satu gestur undo.
+- Filter, transisi, caption aktif, bab YouTube, dan duplikasi proyek kini memakai data bersama atau pemetaan ID yang konsisten.
+- Hasil bab YouTube menggabungkan adegan di bawah 10 detik; video yang terlalu pendek menampilkan peringatan jumlah bab.
+
+### Diperbaiki
+- Loop audio pratinjau tidak restart karena array kosong berubah tiap render.
+- Outline kapsul kata dan glow caption ekspor terlihat dan direset dengan benar.
+- Mute track reset saat proyek berganti; klip lokal divalidasi kepemilikan dan dukungan codec.
+- Upload SFX menolak durasi yang tidak terbaca; ukuran overlay reset ke nilai bawaan dalam rentang.
+
 ## [1.0.0] - 2026-10-02
 
 Rilis pertama Bang Story (sebelumnya bernama Studio Cerita).

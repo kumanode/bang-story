@@ -91,6 +91,10 @@ dan intonasinya konsisten. (Rekaman per klip menghasilkan suara yang sedikit ber
 - Setiap potongan disimpan sebagai WAV dengan `meta.words`, dan durasi klip diatur ke panjang potongannya.
   Potongan suara (`voiceInMs` dll.) direset.
 
+### Suara pembicara per adegan
+
+`clip.speakerId` menentukan siapa yang membacakan seluruh narasi/dialog pada adegan itu. `null` berarti suara narator proyek. `characterIds` tetap hanya menjelaskan siapa yang terlihat pada adegan, jadi tokoh yang tampil tidak otomatis menggantikan narator. Suara karakter juga mencatat `ttsProvider`; bila tidak cocok dengan provider proyek, sistem kembali ke narator. Narasi tetap diproses per kelompok suara agar tiap bagian memakai voice yang sesuai, dan konteks sambungan ElevenLabs hanya dikirim untuk bagian yang memakai suara sama.
+
 ## 5. Caption akurat (Whisper lokal)
 
 - `src/main/whisper.ts` menjalankan `whisper-cli.exe` dengan model **Whisper Small** (487.601.967 byte, dicek

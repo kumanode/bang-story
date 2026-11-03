@@ -1,4 +1,4 @@
-import type { ReactNode } from 'react'
+import { useState, type ReactNode } from 'react'
 import { ImagePlus, Trash2, Type } from 'lucide-react'
 import {
   TEXT_COLORS,
@@ -43,15 +43,82 @@ function Section({ title, children, className }: { title: string; children: Reac
   )
 }
 
-function Slider({ label, value, min, max, unit, onChange }: { label: string; value: number; min: number; max: number; unit: string; onChange: (v: number) => void }) {
+function Slider({
+  label,
+  value,
+  min,
+  max,
+  defaultValue,
+  unit,
+  onChange
+}: {
+  label: string
+  value: number
+  min: number
+  max: number
+  defaultValue: number
+  unit: string
+  onChange: (v: number) => void
+}) {
+  const [editing, setEditing] = useState(false)
+  const [draft, setDraft] = useState(String(value))
+  const def = Math.max(min, Math.min(max, defaultValue))
+
+  const commit = () => {
+    setEditing(false)
+    const n = Number(draft)
+    if (!Number.isNaN(n)) onChange(Math.max(min, Math.min(max, Math.round(n))))
+  }
+
   return (
     <label className="flex items-center gap-3 text-[13px]">
       <span className="w-20 text-ink-2">{label}</span>
-      <input type="range" min={min} max={max} step={1} value={value} onChange={(e) => onChange(Number(e.target.value))} aria-label={label} className="flex-1" />
-      <span className="w-12 text-right font-mono">
-        {value}
-        {unit}
-      </span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={1}
+        value={value}
+      onPointerDown={() => useProject.getState().beginHistoryGesture()}
+      onPointerUp={() => useProject.getState().endHistoryGesture()}
+      onPointerCancel={() => useProject.getState().endHistoryGesture()}
+        onChange={(e) => onChange(Number(e.target.value))}
+        onDoubleClick={() => onChange(def)}
+        aria-label={label}
+        className="flex-1 cursor-pointer"
+        title={`Geser atau klik 2x untuk kembali ke default (${def}${unit})`}
+      />
+      {editing ? (
+        <input
+          autoFocus
+          type="number"
+          min={min}
+          max={max}
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          onBlur={commit}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter') commit()
+            if (e.key === 'Escape') setEditing(false)
+          }}
+          className="h-6 w-14 rounded border border-ink bg-surface px-1 text-right font-mono text-xs outline-none"
+        />
+      ) : (
+        <span
+          role="button"
+          tabIndex={0}
+          onClick={(e) => {
+            e.preventDefault()
+            setDraft(String(value))
+            setEditing(true)
+          }}
+          title={`Klik untuk mengetik angka, klik 2x untuk reset ke ${def}${unit}`}
+          className="w-12 cursor-pointer text-right font-mono hover:text-accent hover:underline"
+        >
+          {value}
+          {unit}
+        </span>
+      )}
     </label>
   )
 }
@@ -145,8 +212,8 @@ function TimeRange({ o, total }: { o: Overlay; total: number }) {
 function ImageSettings({ o }: { o: ImageOverlay }) {
   return (
     <Section title="Tampilan gambar">
-      <Slider label="Ukuran" value={Math.round(o.width * 100)} min={4} max={60} unit="%" onChange={(v) => updateOverlay(o.id, { width: v / 100 })} />
-      <Slider label="Opasitas" value={Math.round(o.opacity * 100)} min={10} max={100} unit="%" onChange={(v) => updateOverlay(o.id, { opacity: v / 100 })} />
+      <Slider label="Ukuran" value={Math.round(o.width * 100)} min={4} max={60} defaultValue={16} unit="%" onChange={(v) => updateOverlay(o.id, { width: v / 100 })} />
+      <Slider label="Opasitas" value={Math.round(o.opacity * 100)} min={10} max={100} defaultValue={100} unit="%" onChange={(v) => updateOverlay(o.id, { opacity: v / 100 })} />
     </Section>
   )
 }

@@ -43,6 +43,10 @@ Pengguna memasukkan kuncinya sendiri di **Pengaturan › Layanan AI dan kunci**.
 
 Narasi selalu dibuat satu rekaman utuh lalu dipotong. Lihat [alur-produksi.md](alur-produksi.md#4-narasi-srcmainnarrationts).
 
+### Kemasan YouTube (`youtubeMetadata`)
+
+Prompt di `story.ts` mengirim judul proyek, sinopsis, sampai 40 adegan pertama (judul dan ringkasan maksimal 120 karakter), durasi, dan bab yang disusun oleh `shared/chapters.ts`. Adegan pendek digabung sampai tiap bab berdurasi minimal 10 detik. Jika hasilnya kurang dari tiga bab, editor menampilkan peringatan karena YouTube membutuhkan minimal tiga timestamp.
+
 ## Higgsfield (`services/higgsfield.ts`, `shared/higgsfield.ts`)
 
 - Base URL `https://api.higgsfield.ai`, header `Authorization: Key <kunci>`.

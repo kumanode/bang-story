@@ -1,9 +1,12 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties, type PointerEvent } from 'react'
-import { Pause, Play, SkipBack, SkipForward } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Maximize2, Minimize2, Pause, Play, SkipBack, SkipForward, Smartphone } from 'lucide-react'
 import {
   CAPTION_BOX_PAD,
   CAPTION_BOX_RADIUS,
   CAPTION_MAX_WIDTH,
+  CAPTION_ACTIVE_SCALE,
+  CAPTION_GLOW_INNER_RADIUS,
+  CAPTION_GLOW_OUTER_RADIUS,
   POPPINS_CELL,
   captionScaleOf,
   captionAt,
@@ -13,11 +16,13 @@ import {
   type CaptionChunk
 } from '@shared/captions'
 import { cameraAt, cameraCss, transitionSecOf } from '@shared/motion'
+import { filterCss } from '@shared/filters'
+import { frameDuration, frameRateFromStorage } from '@shared/frame'
 import { anchorOffset, contrastColor, overlayVisible, textEffects } from '@shared/overlays'
-import type { AspectRatio, Asset, EditorSettings, Overlay } from '@shared/types'
+import type { AspectRatio, Asset, CameraCustomFraming, EditorSettings, Overlay } from '@shared/types'
 import { IconButton, cx } from '../../../components/ui'
 import { timecode } from '../../../lib/format'
-import { auditionWindow, itemAt, updateOverlay, useAudition, useOverlayUi, usePlayback, type TimelineItem } from './engine'
+import { auditionWindow, itemAt, updateOverlay, useAudition, useOverlayUi, usePlayback, useTrackControls, type TimelineItem } from './engine'
 import { transitionStyles } from './transitionStyle'
 
 function hexA(hex: string, a: number): string {
@@ -25,7 +30,19 @@ function hexA(hex: string, a: number): string {
   return `rgba(${parseInt(h.slice(0, 2), 16)}, ${parseInt(h.slice(2, 4), 16)}, ${parseInt(h.slice(4, 6), 16)}, ${a})`
 }
 
-function Frame({ item, local, playing, style }: { item: TimelineItem; local: number; playing: boolean; style?: CSSProperties }) {
+function Frame({
+  item,
+  local,
+  playing,
+  style,
+  framing
+}: {
+  item: TimelineItem
+  local: number
+  playing: boolean
+  style?: CSSProperties
+  framing?: CameraCustomFraming | null
+}) {
   const video = useRef<HTMLVideoElement>(null)
   const useVideo = item.clip.motionType === 'video' && !!item.video
   // A video trimmed on the timeline starts that far into its file.
@@ -48,7 +65,7 @@ function Frame({ item, local, playing, style }: { item: TimelineItem; local: num
 
   const own = item.clip.durationMs / 1000
   const p = Math.min(1, local / own)
-  const cam = cameraAt(item.clip.cameraPreset, item.clip.motionStrength, p, local)
+  const cam = cameraAt(item.clip.cameraPreset, item.clip.motionStrength, p, local, framing)
   const videoCam = cameraAt(item.clip.videoCamera ?? 'static', item.clip.videoStrength ?? 'halus', p, local)
   return (
     <div data-clip={item.clip.id} className="absolute inset-0 overflow-hidden bg-sand" style={style}>
@@ -63,7 +80,11 @@ function Frame({ item, local, playing, style }: { item: TimelineItem; local: num
           className="absolute inset-0 size-full object-cover will-change-transform"
           // A moving video is kept just short of opaque so it is never promoted to a hardware overlay,
           // which would snap the camera move to whole pixels and make it tremble.
-          style={{ transform: cameraCss(videoCam), opacity: (item.clip.videoCamera ?? 'static') === 'static' ? 1 : 0.999 }}
+          style={{
+            transform: cameraCss(videoCam),
+            opacity: (item.clip.videoCamera ?? 'static') === 'static' ? 1 : 0.999,
+            filter: filterCss(item.clip.filter)
+          }}
         />
       ) : item.image ? (
         <img
@@ -71,7 +92,7 @@ function Frame({ item, local, playing, style }: { item: TimelineItem; local: num
           alt=""
           draggable={false}
           className="absolute inset-0 size-full object-cover will-change-transform"
-          style={{ transform: cameraCss(cam) }}
+          style={{ transform: cameraCss(cam), filter: filterCss(item.clip.filter) }}
         />
       ) : (
         <div className="flex size-full items-center justify-center text-sm text-muted">Klip {item.index + 1} belum punya gambar</div>
@@ -108,7 +129,7 @@ function Caption({ chunks, t, editor, width, height }: { chunks: CaptionChunk[];
   const family = `'${style.fontInfo.family}', sans-serif`
   const words = hit.chunk.words.map((w) => displayWord(w.text, style))
   const font = `${style.weight} ${size}px ${family}`
-  const lines = layoutCaptionLines(words, (s) => textWidth(font, s), width * CAPTION_MAX_WIDTH)
+  const lines = layoutCaptionLines(words, (s) => textWidth(font, s), width * CAPTION_MAX_WIDTH / (style.popScale ? CAPTION_ACTIVE_SCALE : 1))
   let index = 0
   return (
     <div
@@ -133,10 +154,33 @@ function Caption({ chunks, t, editor, width, height }: { chunks: CaptionChunk[];
           {line.map((word, k) => {
             const i = index++
             return (
-              <span key={k} style={highlight && i === hit.word ? { color: style.highlight } : undefined}>
-                {word}
-                {k < line.length - 1 ? ' ' : ''}
-              </span>
+              (() => {
+                const isActive = highlight && i === hit.word
+                const isPill = style.pill && isActive
+                const wordStyle: CSSProperties = {}
+                if (isActive) {
+                  wordStyle.color = isPill ? '#000000' : style.highlight
+                  if (style.popScale) {
+                    wordStyle.transform = `scale(${CAPTION_ACTIVE_SCALE})`
+                    wordStyle.display = 'inline-block'
+                  }
+                  if (isPill) {
+                    wordStyle.backgroundColor = style.highlight
+                    wordStyle.borderRadius = `${Math.round(size * 0.22)}px`
+                    wordStyle.padding = `0 ${Math.round(size * 0.25)}px`
+                    wordStyle.WebkitTextStroke = '0px transparent'
+                  } else if (style.glowColor) {
+                    // The word keeps its dark outline; the halo sits behind it, as the separate ASS glow layer does.
+                    wordStyle.textShadow = `0 0 ${Math.round(size * CAPTION_GLOW_INNER_RADIUS)}px ${style.glowColor}, 0 0 ${Math.round(size * CAPTION_GLOW_OUTER_RADIUS)}px ${style.glowColor}`
+                  }
+                }
+                return (
+                  <span key={k} style={isActive ? wordStyle : undefined} className={isPill ? 'inline-block my-0.5' : undefined}>
+                    {word}
+                    {k < line.length - 1 ? ' ' : ''}
+                  </span>
+                )
+              })()
             )
           })}
         </div>
@@ -244,8 +288,57 @@ export function Player({
   const { t, playing, toggle, seek } = usePlayback()
   const audition = useAudition((s) => s.audition)
   const stopAudition = useAudition((s) => s.stop)
+  const captionsHidden = useTrackControls((s) => s.captionsHidden)
+  const overlaysHidden = useTrackControls((s) => s.overlaysHidden)
   const [clock, setClock] = useState(0)
+  const [isFullscreen, setIsFullscreen] = useState(false)
+  const [showShortsGuide, setShowShortsGuide] = useState(false)
   const stage = useRef<HTMLDivElement>(null)
+
+  const stepFrame = (dir: -1 | 1): void => {
+    stopAudition()
+    let rate: 30 | 60 = 30
+    try { rate = frameRateFromStorage(localStorage.getItem('bangstory_export_fps')) } catch { /* Use the default frame rate. */ }
+    const now = usePlayback.getState().t
+    seek(Math.min(total, Math.max(0, now + dir * frameDuration(rate))))
+  }
+  const stepFrameRef = useRef(stepFrame)
+  stepFrameRef.current = stepFrame
+
+  const toggleFullscreen = (): void => {
+    if (!document.fullscreenElement) {
+      stage.current?.requestFullscreen?.().catch(() => {})
+    } else {
+      document.exitFullscreen?.().catch(() => {})
+    }
+  }
+
+  useEffect(() => {
+    const onFsChange = (): void => setIsFullscreen(!!document.fullscreenElement)
+    document.addEventListener('fullscreenchange', onFsChange)
+    return () => document.removeEventListener('fullscreenchange', onFsChange)
+  }, [])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => {
+      const el = e.target as HTMLElement
+      const tag = el?.tagName
+      const typing = tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || !!el?.isContentEditable
+      if (typing || document.querySelector('[role="dialog"]')) return
+      if (e.key === '[') {
+        e.preventDefault()
+        stepFrameRef.current(-1)
+      } else if (e.key === ']') {
+        e.preventDefault()
+        stepFrameRef.current(1)
+      } else if ((e.key === 'f' || e.key === 'F') && !e.ctrlKey && !e.metaKey && !e.altKey) {
+        e.preventDefault()
+        toggleFullscreen()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   // An audition loops a part of the timeline here only; the playhead and the audio do not move.
   useEffect(() => {
@@ -319,24 +412,60 @@ export function Player({
               item={prev}
               local={prev.end - prev.start}
               playing={false}
+              framing={editor.clipFraming?.[prev.clip.id]}
               style={fx ? { ...fx.prev, zIndex: 2 } : { opacity: 0, zIndex: 0 }}
             />
           )}
-          {cur && <Frame key={cur.clip.id} item={cur} local={local} playing={viewPlaying} style={{ ...fx?.cur, zIndex: 1 }} />}
-          {next && <Frame key={next.clip.id} item={next} local={0} playing={false} style={{ opacity: 0, zIndex: 0 }} />}
+          {cur && (
+            <Frame
+              key={cur.clip.id}
+              item={cur}
+              local={local}
+              playing={viewPlaying}
+              framing={editor.clipFraming?.[cur.clip.id]}
+              style={{ ...fx?.cur, zIndex: 1 }}
+            />
+          )}
+          {next && (
+            <Frame
+              key={next.clip.id}
+              item={next}
+              local={0}
+              playing={false}
+              framing={editor.clipFraming?.[next.clip.id]}
+              style={{ opacity: 0, zIndex: 0 }}
+            />
+          )}
         </div>
         {/* Logos sit under the captions and overlay text sits above them, as in the export. */}
-        {shown
-          .filter((o) => o.kind === 'image')
-          .map((o) => (
-            <OverlayItem key={o.id} o={o} asset={o.kind === 'image' ? (assets[o.assetId] ?? null) : null} box={box} editable={editOverlays} />
-          ))}
-        <Caption chunks={chunks} t={viewT} editor={editor} width={box.w} height={box.h} />
-        {shown
-          .filter((o) => o.kind === 'text')
-          .map((o) => (
-            <OverlayItem key={o.id} o={o} asset={null} box={box} editable={editOverlays} />
-          ))}
+        {!overlaysHidden &&
+          shown
+            .filter((o) => o.kind === 'image')
+            .map((o) => (
+              <OverlayItem key={o.id} o={o} asset={o.kind === 'image' ? (assets[o.assetId] ?? null) : null} box={box} editable={editOverlays} />
+            ))}
+        {!captionsHidden && <Caption chunks={chunks} t={viewT} editor={editor} width={box.w} height={box.h} />}
+        {!overlaysHidden &&
+          shown
+            .filter((o) => o.kind === 'text')
+            .map((o) => (
+              <OverlayItem key={o.id} o={o} asset={null} box={box} editable={editOverlays} />
+            ))}
+        {showShortsGuide && aspect === '9:16' && (
+          <div className="pointer-events-none absolute inset-0 z-20 flex flex-col justify-between border-2 border-dashed border-accent/70 font-mono text-[10px] text-white">
+            <div className="flex h-[15%] w-full items-start justify-center bg-accent/15 p-1">
+              <span className="rounded bg-ink/80 px-1.5 py-0.5 text-[9px] text-paper">Batas Header & Suara</span>
+            </div>
+            <div className="flex flex-1 items-center justify-end pr-1">
+              <div className="flex h-[55%] w-[18%] flex-col items-center justify-center rounded-lg border border-accent/50 bg-accent/20 p-0.5 text-center leading-tight">
+                <span className="rounded bg-ink/80 px-1 py-0.5 text-[8px] text-paper">Ikon Interaksi</span>
+              </div>
+            </div>
+            <div className="flex h-[22%] w-full items-end justify-start bg-accent/15 p-2">
+              <span className="rounded bg-ink/80 px-1.5 py-0.5 text-[9px] text-paper">Batas Judul & Akun</span>
+            </div>
+          </div>
+        )}
         {!items.length && <div className="flex size-full items-center justify-center text-paper">Belum ada klip</div>}
         {audition && win && (
           <span className="pointer-events-none absolute left-2.5 top-2.5 z-10 flex items-center gap-1.5 rounded-full bg-ink/80 px-2.5 py-1 text-xs font-medium text-paper">
@@ -345,9 +474,12 @@ export function Player({
           </span>
         )}
       </div>
-      <div className="flex items-center gap-2.5" style={{ width: box.w }}>
+      <div className="flex items-center gap-1.5" style={{ width: box.w }}>
         <IconButton label="Klip sebelumnya" className="border-transparent bg-transparent" onClick={() => jump(-1)}>
           <SkipBack className="size-5" />
+        </IconButton>
+        <IconButton label="Mundur 1 frame ([)" className="border-transparent bg-transparent" onClick={() => stepFrame(-1)}>
+          <ChevronLeft className="size-5" />
         </IconButton>
         <button
           type="button"
@@ -357,18 +489,42 @@ export function Player({
             if (!playing && t >= total - 0.05) seek(0)
             toggle()
           }}
-          className="flex size-12 items-center justify-center rounded-full border-[1.5px] border-ink bg-ink text-paper hover:bg-ink-2"
+          className="flex size-11 items-center justify-center rounded-full border-[1.5px] border-ink bg-ink text-paper hover:bg-ink-2"
         >
           {playing ? <Pause className="size-5" fill="currentColor" /> : <Play className="ml-0.5 size-5" fill="currentColor" />}
         </button>
+        <IconButton label="Maju 1 frame (])" className="border-transparent bg-transparent" onClick={() => stepFrame(1)}>
+          <ChevronRight className="size-5" />
+        </IconButton>
         <IconButton label="Klip berikutnya" className="border-transparent bg-transparent" onClick={() => jump(1)}>
           <SkipForward className="size-5" />
         </IconButton>
-        <span className="font-mono text-sm">
+        <span className="ml-2 font-mono text-sm">
           {timecode(t)} <span className="text-muted">/ {timecode(total)}</span>
         </span>
         <span className="flex-1" />
-        <span className="text-xs text-ink-2">Spasi untuk putar atau jeda</span>
+        {aspect === '9:16' && (
+          <button
+            type="button"
+            onClick={() => setShowShortsGuide(!showShortsGuide)}
+            aria-pressed={showShortsGuide}
+            title="Tampilkan panduan area aman YouTube Shorts"
+            className={cx(
+              'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors',
+              showShortsGuide ? 'border border-ink bg-sun-soft font-semibold text-ink' : 'text-ink-2 hover:bg-sand'
+            )}
+          >
+            <Smartphone className="size-3.5" />
+            Shorts Guide
+          </button>
+        )}
+        <IconButton
+          label={isFullscreen ? 'Keluar layar penuh (F)' : 'Layar penuh / Cinema mode (F)'}
+          className="border-transparent bg-transparent"
+          onClick={toggleFullscreen}
+        >
+          {isFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+        </IconButton>
       </div>
     </section>
   )

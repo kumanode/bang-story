@@ -1,5 +1,7 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { RefreshCw, Sparkles, Trash2, UserPlus } from 'lucide-react'
+import type { VoiceOption } from '@shared/types'
+import { Select } from '../../components/Select'
 import { Button, Field, Modal, Progress, confirmDialog, cx, inputCls } from '../../components/ui'
 import { errorText } from '../../lib/format'
 import { useApp } from '../../store/app'
@@ -27,13 +29,20 @@ const LOOK_HINT =
   'Tulis ciri tubuh dulu, lalu "Default outfit:" untuk baju bawaan di lembar karakter. Baju bisa diganti per adegan lewat baris Wardrobe di prompt visual. Contoh: human man, 40s, short black hair, warm brown skin. Default outfit: light-blue colony medical scrubs, stethoscope.'
 
 function NewCharacter({ onClose, onCreated }: { onClose: () => void; onCreated?: (id: string) => void }) {
-  const { addCharacter } = useProject()
+  const { project, addCharacter } = useProject()
   const [name, setName] = useState('')
   const [description, setDescription] = useState('')
+  const [ttsVoice, setTtsVoice] = useState('')
+  const [voices, setVoices] = useState<VoiceOption[]>([])
   const typed = !!(name.trim() || description.trim())
 
+  useEffect(() => {
+    if (!project) return
+    window.api.settings.voices(project.ttsProvider).then(setVoices).catch(() => {})
+  }, [project?.ttsProvider])
+
   const save = (): void => {
-    const id = addCharacter({ name, description })
+    const id = addCharacter({ name, description, ttsVoice: ttsVoice || null, ttsProvider: ttsVoice ? project?.ttsProvider ?? null : null })
     if (onCreated) onCreated(id)
     else onClose()
   }
@@ -70,6 +79,24 @@ function NewCharacter({ onClose, onCreated }: { onClose: () => void; onCreated?:
           />
         </Field>
       </div>
+      <div className="mt-3">
+        <Field label="Suara Karakter (Opsional)" hint="Pilih suara khusus jika tokoh ini memiliki dialog tersendiri.">
+          <Select
+            label="Suara karakter"
+            size="sm"
+            value={ttsVoice}
+            onChange={(v) => setTtsVoice(v)}
+            options={[
+              { value: '', label: `Bawaan narator (${project?.ttsVoice || 'Utama'})` },
+              ...voices.map((v) => ({
+                value: v.id,
+                label: v.name,
+                hint: v.description || undefined
+              }))
+            ]}
+          />
+        </Field>
+      </div>
       <div className="flex items-center justify-end gap-2.5">
         <Button onClick={onClose}>Batal</Button>
         <Button variant="primary" disabled={!name.trim()} onClick={save}>
@@ -81,9 +108,16 @@ function NewCharacter({ onClose, onCreated }: { onClose: () => void; onCreated?:
 }
 
 function EditCharacter({ characterId, onClose }: { characterId: string | null; onClose: () => void }) {
-  const { characters, assets, jobs, updateCharacter, removeCharacter, flush, clips } = useProject()
+  const { project, characters, assets, jobs, updateCharacter, removeCharacter, flush, clips } = useProject()
   const { toast } = useApp()
+  const [voices, setVoices] = useState<VoiceOption[]>([])
   const c = characters.find((x) => x.id === characterId)
+
+  useEffect(() => {
+    if (!project) return
+    window.api.settings.voices(project.ttsProvider).then(setVoices).catch(() => {})
+  }, [project?.ttsProvider])
+
   if (!c) return null
   const sheet = c.sheetAssetId ? assets[c.sheetAssetId] : null
   const job = jobFor(jobs, 'sheet', { characterId: c.id })
@@ -150,6 +184,27 @@ function EditCharacter({ characterId, onClose }: { characterId: string | null; o
             className={cx(inputCls, 'resize-none py-2.5 text-sm leading-relaxed')}
           />
         </Field>
+      </div>
+      <div className="mt-3">
+        <Field label="Suara Khusus Karakter (TTS)" hint="Suara saat adegan menampilkan tokoh ini. Kosongkan untuk mengikuti narator utama.">
+          <Select
+            label="Suara karakter"
+            size="sm"
+            value={c.ttsVoice || ''}
+            onChange={(v) => updateCharacter(c.id, { ttsVoice: v || null, ttsProvider: v ? project?.ttsProvider ?? null : null })}
+            options={[
+              { value: '', label: `Ikuti narator proyek (${project?.ttsVoice || 'Bawaan'})` },
+              ...voices.map((v) => ({
+                value: v.id,
+                label: v.name,
+                hint: v.description || undefined
+              }))
+            ]}
+          />
+        </Field>
+        {c.ttsVoice && c.ttsProvider && c.ttsProvider !== project?.ttsProvider && (
+          <p className="mt-2 text-xs text-sun-ink">Suara ini dibuat untuk {c.ttsProvider}. Proyek memakai {project?.ttsProvider}, jadi narator akan dipakai sampai kamu memilih suara yang cocok.</p>
+        )}
       </div>
       <div className="flex items-center gap-2.5">
         <Button variant="danger" icon={<Trash2 className="size-4" />} onClick={() => void remove()}>

@@ -1,6 +1,6 @@
 import { useEffect, type ReactNode } from 'react'
 import { Play } from 'lucide-react'
-import { TRANSITIONS, TRANSITION_MAX_SEC, TRANSITION_MIN_SEC, transitionSecOf } from '@shared/motion'
+import { TRANSITIONS, TRANSITION_MAX_SEC, TRANSITION_MIN_SEC, TRANSITION_SEC, transitionSecOf } from '@shared/motion'
 import type { Clip, TransitionId } from '@shared/types'
 import { Button, cx } from '../../../components/ui'
 import { clipNumber } from '../../../lib/format'
@@ -89,12 +89,30 @@ export function TransitionPanel({ clip, next, index }: { clip: Clip; next: Clip;
               step={0.1}
               value={seconds}
               onChange={(e) => updateClip(clip.id, { transitionMs: Math.round(Number(e.target.value) * 1000) })}
-              onPointerUp={() => preview()}
+              onPointerDown={() => useProject.getState().beginHistoryGesture()}
+              onPointerCancel={() => useProject.getState().endHistoryGesture()}
+              onDoubleClick={() => {
+                updateClip(clip.id, { transitionMs: Math.round(TRANSITION_SEC * 1000) })
+                preview()
+              }}
+              onPointerUp={() => { useProject.getState().endHistoryGesture(); preview() }}
               onKeyUp={() => preview()}
               aria-label="Durasi transisi"
-              className="min-w-0 flex-1"
+              className="min-w-0 flex-1 cursor-pointer"
+              title="Geser atau klik 2x untuk kembali ke default (0,4 dtk)"
             />
-            <span className="w-16 shrink-0 text-right font-mono">{secondsLabel(seconds)}</span>
+            <span
+              role="button"
+              tabIndex={0}
+              onDoubleClick={() => {
+                updateClip(clip.id, { transitionMs: Math.round(TRANSITION_SEC * 1000) })
+                preview()
+              }}
+              title="Klik 2x untuk kembali ke 0,4 dtk"
+              className="w-16 shrink-0 text-right font-mono"
+            >
+              {secondsLabel(seconds)}
+            </span>
           </label>
           <p className="text-xs leading-relaxed text-muted">Transisi berjalan di awal klip berikutnya, jadi panjang video tidak berubah.</p>
         </Section>
