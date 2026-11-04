@@ -2,6 +2,7 @@ import { useState, type ReactNode } from 'react'
 import { AlertCircle, ArrowLeft, Check, CheckCircle2, Loader2, Pencil, Save, SlidersHorizontal } from 'lucide-react'
 import type { Step } from '@shared/types'
 import { Button, IconButton, Kbd, cx } from '../../components/ui'
+import { ThemeToggle } from '../../components/ThemeToggle'
 import { relativeTime } from '../../lib/format'
 import { useApp } from '../../store/app'
 import { useProject } from '../../store/project'
@@ -141,6 +142,7 @@ export function ProjectHeader({ doneSteps, right }: { doneSteps: Step[]; right?:
           Simpan
           <Kbd>Ctrl S</Kbd>
         </Button>
+        <ThemeToggle />
         <IconButton
           label="Pengaturan"
           onClick={async () => {

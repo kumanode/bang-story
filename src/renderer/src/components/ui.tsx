@@ -167,7 +167,7 @@ export function Switch({ on, onChange, label }: { on: boolean; onChange: (v: boo
         on ? 'justify-end bg-accent' : 'justify-start bg-line'
       )}
     >
-      <span className="block size-[19px] rounded-full border-[1.5px] border-ink bg-white" />
+      <span className="block size-[19px] rounded-full border-[1.5px] border-ink bg-surface" />
     </button>
   )
 }
@@ -187,7 +187,7 @@ export function Field({ label, hint, children, className }: { label: ReactNode; 
 
 export function Progress({ value, className }: { value: number; className?: string }) {
   return (
-    <span className={cx('block h-2 overflow-hidden rounded-full bg-[#EFE9DF]', className)}>
+    <span className={cx('block h-2 overflow-hidden rounded-full bg-sand', className)}>
       <span className="block h-full rounded-full bg-accent transition-[width] duration-300" style={{ width: `${Math.round(value * 100)}%` }} />
     </span>
   )
@@ -232,7 +232,7 @@ export function Modal({
       <div
         role="dialog"
         aria-modal="true"
-        className="scroll-thin flex max-h-full flex-col gap-5 overflow-y-auto rounded-[20px] border-[1.5px] border-ink bg-surface p-7 shadow-[6px_6px_0_#1f1d1a]"
+        className="scroll-thin flex max-h-full flex-col gap-5 overflow-y-auto rounded-[20px] border-[1.5px] border-ink bg-surface p-7 shadow-ink-xl"
         style={{ width }}
       >
         <div className="flex items-start gap-3">

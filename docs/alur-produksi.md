@@ -16,24 +16,31 @@ Ide cerita ──LLM──► Naskah (adegan + narasi) ──LLM──► Rencan
                                                                   FFmpeg → MP4
 ```
 
-## 1. Ide → naskah (`generateScript`, `src/main/story.ts`)
+## 1. Ide → hook → kerangka → naskah (`src/main/story.ts`)
 
 - Masukan: sinopsis, target durasi, bahasa.
 - Pilihan durasi: 1, 3, 5, 10, 15, 20, 25, atau 30 menit. Untuk durasi sampai 10 menit, targetnya sekitar satu adegan per 5,5 detik; di atas 10 menit sekitar satu adegan per 8 detik. Jumlah dibatasi maksimal 230 dan minimal 3.
 - Untuk durasi 15 menit atau lebih, halaman Ide memperlihatkan perkiraan jumlah adegan dan kredit gambar bila model menyediakan estimasi.
 - Sebelum membuat gambar atau video pada proyek berdurasi 10 menit atau lebih, aplikasi meminta konfirmasi jumlah adegan dan perkiraan kredit per adegan. Estimasi gambar menggunakan model yang dipilih; layanan yang tidak menyediakan endpoint estimasi tidak menampilkan jumlah kredit.
-- Skema JSON keluaran: `{ title, scenes: [{ title, story, narration }] }`.
-- Narasi 10–18 kata per adegan dan boleh memakai satu dua tag ekspresi berbahasa Inggris (`<short pause>`,
+- Kreator memilih hook otomatis (tiga opsi) atau menulisnya sendiri. Hook dan kerangka babak disimpan di proyek,
+  sehingga tahap peninjauan bisa dilanjutkan setelah aplikasi ditutup.
+- AI menyusun kerangka 3–6 babak di sekitar hook terpilih. Ringkasan dan judul babak bisa diedit sebelum
+  naskah dibuat; jumlah adegan per babak disesuaikan dengan durasi proyek.
+- Skema JSON keluaran naskah: `{ title, scenes: [{ title, story, narration }] }`. Adegan pertama memakai hook
+  pilihan sebagai awal narasi, dan alur diarahkan untuk menjawab janji hook di bagian akhir.
+- Panjang narasi mengikuti jatah durasi adegan; hook pembuka boleh lebih pendek. Narasi boleh memakai satu dua tag ekspresi berbahasa Inggris (`<short pause>`,
   `<long pause>`, `<chuckles>`, `<sigh>`, `<gasp>`, `<whispers>`). Daftar tag: `VOICE_TAGS` di `shared/speech.ts`.
 - Hasil disimpan dengan `replaceScript`. Durasi awal tiap klip diperkirakan dari jumlah kata
   (`estimateNarrationMs`: sekitar 2,6 kata per detik).
 
-Untuk naskah di atas 60 adegan, penulisan dilakukan bertahap: LLM membuat kerangka babak, lalu menulis paling
-banyak 30 adegan per kelompok. Setiap kelompok membawa ringkasan cerita, babak, dan adegan terakhir dari bagian
-sebelumnya agar alurnya tersambung. Progres ditampilkan per kelompok. Jika satu kelompok gagal, hasil kelompok
-yang sudah berhasil tersedia di memori selama aplikasi tetap terbuka untuk melanjutkan percobaan.
+Semua naskah ditulis mengikuti kerangka babak yang ditinjau. Untuk naskah di atas 60 adegan, penulisan dilakukan
+bertahap, paling banyak 30 adegan per kelompok. Setiap kelompok membawa ringkasan kerangka dan adegan terakhir
+sebelumnya agar alurnya tersambung. Progres ditampilkan per kelompok; hasil kelompok yang berhasil bisa dicoba
+ulang selama aplikasi tetap terbuka.
 
 Di langkah **Naskah** pengguna boleh mengubah, menambah, menghapus, dan mengurutkan adegan.
+Setiap adegan juga bisa direvisi dengan instruksi singkat. Revisi hanya mengganti alur dan narasi adegan tersebut;
+visual ditandai perlu diperbarui bila alurnya berubah, dan suara lama ditandai perlu dibuat ulang bila narasinya berubah.
 
 ## 2. Naskah → rencana visual (`generateVisuals`)
 

@@ -28,7 +28,11 @@ function InsertGap({ onInsert }: { onInsert: () => void }) {
 }
 
 function SceneCard({ clip, index, total, onInsert }: { clip: Clip; index: number; total: number; onInsert: () => void }) {
-  const { assets, updateClip, moveClip, removeClip } = useProject()
+  const { assets, updateClip, moveClip, removeClip, flush } = useProject()
+  const { toast } = useApp()
+  const [revisionOpen, setRevisionOpen] = useState(false)
+  const [revisionRequest, setRevisionRequest] = useState('')
+  const [revising, setRevising] = useState(false)
   const image = clip.imageAssetId ? assets[clip.imageAssetId] : null
   const voice = clip.audioAssetId ? assets[clip.audioAssetId] : null
   const stale = !!clip.visualPrompt.trim() && needsVisual(clip)
@@ -52,6 +56,27 @@ function SceneCard({ clip, index, total, onInsert }: { clip: Clip; index: number
       el?.focus()
       el?.setSelectionRange(head.length + 1, head.length + 1)
     })
+  }
+
+  const revise = async (): Promise<void> => {
+    if (!revisionRequest.trim()) return
+    setRevising(true)
+    try {
+      await flush()
+      const result = await window.api.story.reviseScene(clip.projectId, clip.id, revisionRequest)
+      updateClip(clip.id, {
+        story: result.story,
+        narration: result.narration,
+        ...(clip.audioAssetId ? {} : { durationMs: estimateNarrationMs(result.narration) })
+      })
+      setRevisionOpen(false)
+      setRevisionRequest('')
+      toast('success', `Adegan ${clipNumber(index)} berhasil diperbaiki. Cek lagi alurnya dan buat ulang visual atau suara jika perlu.`)
+    } catch (e) {
+      toast('error', errorText(e))
+    } finally {
+      setRevising(false)
+    }
   }
 
   const remove = async (): Promise<void> => {
@@ -97,6 +122,14 @@ function SceneCard({ clip, index, total, onInsert }: { clip: Clip; index: number
           />
           {stale && <Badge tone="warn">Visual perlu diperbarui</Badge>}
           {voiceOld && <Badge tone="warn">Suara perlu dibuat ulang</Badge>}
+          <button
+            type="button"
+            onClick={() => setRevisionOpen((open) => !open)}
+            className="flex h-8 items-center gap-1.5 rounded-lg px-2 text-xs font-semibold text-ink-2 hover:bg-sand hover:text-ink"
+          >
+            <Sparkles className="size-3.5" />
+            Perbaiki dengan AI
+          </button>
           <Menu
             trigger={(open) => (
               <IconButton label="Opsi adegan" size={34} onClick={open}>
@@ -109,6 +142,26 @@ function SceneCard({ clip, index, total, onInsert }: { clip: Clip; index: number
             ]}
           />
         </div>
+
+        {revisionOpen && (
+          <div className="flex flex-col gap-2 rounded-xl border border-line-2 bg-paper p-3">
+            <label htmlFor={`scene-${clip.id}-revision`} className="text-xs font-semibold text-ink-2">Apa yang ingin kamu ubah di adegan ini?</label>
+            <AutoTextarea
+              id={`scene-${clip.id}-revision`}
+              minRows={2}
+              value={revisionRequest}
+              onChange={(e) => setRevisionRequest(e.target.value)}
+              placeholder="Contoh: buat konfliknya lebih tegang, tapi pertahankan fakta dan sambungannya dengan adegan berikutnya."
+              className={cx(inputCls, 'py-2 text-sm leading-relaxed')}
+            />
+            <div className="flex justify-end gap-2">
+              <Button size="sm" disabled={revising} onClick={() => setRevisionOpen(false)}>Batal</Button>
+              <Button size="sm" variant="primary" loading={revising} disabled={!revisionRequest.trim()} onClick={() => void revise()} icon={!revising && <Sparkles className="size-3.5" />}>
+                Terapkan revisi
+              </Button>
+            </div>
+          </div>
+        )}
 
         <label className="flex flex-col gap-1">
           <span className="text-xs font-semibold text-ink-2">Alur adegan</span>

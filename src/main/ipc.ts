@@ -60,7 +60,7 @@ import * as gemini from './services/gemini'
 import * as f2a from './services/flow2api'
 import * as hf from './services/higgsfield'
 import * as llm from './services/llm'
-import { generateScript, generateVisuals, generateMusicPrompt, generateThumbnailConcept, generateYoutubeMetadata } from './story'
+import { generateHooks, generateOutline, generateScript, generateVisuals, generateMusicPrompt, generateThumbnailConcept, generateYoutubeMetadata, reviseScene } from './story'
 
 
 type Handler = (...args: any[]) => unknown
@@ -99,7 +99,10 @@ export function registerIpc(): void {
   })
   handle('projects:duplicate', (id: string) => duplicateProject(id))
 
+  handle('story:hooks', (projectId: string) => generateHooks(projectId))
+  handle('story:outline', (projectId: string, hook: string) => generateOutline(projectId, String(hook ?? '')))
   handle('story:script', (projectId: string) => generateScript(projectId))
+  handle('story:reviseScene', (projectId: string, clipId: string, instruction: string) => reviseScene(projectId, clipId, String(instruction ?? '')))
   handle('story:musicPrompt', (projectId: string) => generateMusicPrompt(projectId))
   handle('story:youtubeMetadata', (projectId: string) => generateYoutubeMetadata(projectId))
   handle('story:visuals', (projectId: string, mode: 'missing' | 'all') => generateVisuals(projectId, mode === 'all' ? 'all' : 'missing'))

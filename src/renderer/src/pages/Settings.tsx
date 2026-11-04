@@ -13,20 +13,25 @@ import {
   Info,
   KeyRound,
   Mic,
+  Laptop,
+  Moon,
   SlidersHorizontal,
+  Sun,
   Trash2
 } from 'lucide-react'
 import { FLOW2API_IMAGE_MODELS, FLOW2API_VIDEO_MODELS } from '@shared/flow2api-catalog'
 import { HF_IMAGE_MODELS, HF_VIDEO_MODELS } from '@shared/higgsfield'
 import { LANGUAGES, LLM_PROVIDERS } from '@shared/models'
-import type { ApiProvider, AppSettings, KeyStatus, KeyTestResult, LlmProvider, TtsProvider, VisualProvider } from '@shared/types'
+import type { ApiProvider, AppSettings, KeyStatus, KeyTestResult, LlmProvider, ThemePreference, TtsProvider, VisualProvider } from '@shared/types'
 import { Logo } from '../components/Logo'
 import { ModelPicker } from '../components/ModelPicker'
 import { ProviderLogo, type ProviderLogoId } from '../components/ProviderLogo'
 import { Select } from '../components/Select'
+import { ThemeToggle } from '../components/ThemeToggle'
+import { useTheme } from '../lib/theme'
 import { AboutSection } from './AboutSection'
 import { WhisperSection } from './WhisperSection'
-import { Badge, Button, Field, IconButton, confirmDialog, cx, inputCls } from '../components/ui'
+import { Badge, Button, Field, IconButton, Segmented, confirmDialog, cx, inputCls } from '../components/ui'
 import { errorText, relativeTime } from '../lib/format'
 import { useModels } from '../lib/useModels'
 import { useApp } from '../store/app'
@@ -661,6 +666,7 @@ function VisualSection({
 
 export function Settings() {
   const { go, route } = useApp()
+  const { theme, setTheme } = useTheme()
   const back = route.name === 'settings' && route.back ? route.back : ({ name: 'home' } as const)
   const [tab, setTab] = useState<Tab>('services')
   const [keys, setKeys] = useState<KeyStatus[]>([])
@@ -693,6 +699,7 @@ export function Settings() {
         <span className="text-xl text-line-3">/</span>
         <span className="font-semibold">Pengaturan</span>
         <div className="flex-1" />
+        <ThemeToggle />
         <Button icon={<ArrowLeft className="size-[18px]" />} onClick={() => go(back)}>
           {back.name === 'project' ? 'Kembali ke proyek' : 'Kembali ke beranda'}
         </Button>
@@ -740,6 +747,21 @@ export function Settings() {
                   <p className="mt-2 text-[15px] text-ink-2">Pilihan bawaan untuk proyek baru.</p>
                 </div>
                 <section className="flex flex-col gap-5 rounded-2xl border border-line bg-surface p-6">
+                  <Field label="Tema tampilan" hint="Pilih nuansa warna terang, gelap, atau ikuti pengaturan tema sistem operasi kamu.">
+                    <Segmented<ThemePreference>
+                      value={theme}
+                      onChange={(v) => {
+                        setTheme(v)
+                        if (settings) void window.api.settings.set({ theme: v }).then(setSettings)
+                      }}
+                      options={[
+                        { id: 'light', label: <span className="flex items-center gap-1.5"><Sun className="size-4" />Terang</span> },
+                        { id: 'dark', label: <span className="flex items-center gap-1.5"><Moon className="size-4" />Gelap</span> },
+                        { id: 'system', label: <span className="flex items-center gap-1.5"><Laptop className="size-4" />Ikuti sistem</span> }
+                      ]}
+                      className="max-w-[360px]"
+                    />
+                  </Field>
                   <Field label="Bahasa default naskah dan suara">
                     <Select
                       label="Bahasa default naskah dan suara"

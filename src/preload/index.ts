@@ -24,7 +24,10 @@ const api: StudioApi = {
     duplicate: call('projects:duplicate')
   },
   story: {
+    hooks: call('story:hooks'),
+    outline: call('story:outline'),
     script: call('story:script'),
+    reviseScene: call('story:reviseScene'),
     visuals: call('story:visuals'),
     musicPrompt: call('story:musicPrompt'),
     youtubeMetadata: call('story:youtubeMetadata'),

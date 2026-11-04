@@ -411,7 +411,7 @@ export function Player({
   }
 
   return (
-    <section ref={stage} className="flex min-h-0 flex-col items-center justify-center gap-3 bg-[#EFEAE2] p-5">
+    <section ref={stage} className="flex min-h-0 flex-col items-center justify-center gap-3 bg-draft p-5">
       <div
         className="relative overflow-hidden rounded-xl border-[1.5px] border-ink bg-ink"
         style={{ width: box.w, height: box.h }}

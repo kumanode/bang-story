@@ -146,6 +146,10 @@ const MIGRATIONS: string[] = [
   ALTER TABLE clips ADD COLUMN speaker_id TEXT;
   ALTER TABLE characters ADD COLUMN tts_provider TEXT;
   UPDATE characters SET tts_provider = (SELECT tts_provider FROM projects WHERE projects.id = characters.project_id) WHERE tts_voice IS NOT NULL;
+  `,
+  // Reviewed hooks and story outlines belong to the project so interrupted writing can resume.
+  `
+  ALTER TABLE projects ADD COLUMN story_plan_json TEXT;
   `
 ]
 

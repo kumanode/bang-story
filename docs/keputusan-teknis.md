@@ -123,7 +123,8 @@ perbedaan kecil, terutama pada gradasi kuat.
 
 ### Cerita panjang dipecah menjadi kelompok
 Durasi 15–30 menit memakai target sekitar 8 detik per adegan, dengan batas 230 adegan. Naskah di atas 60 adegan
-dibuat dari kerangka babak dan kelompok maksimal 30 adegan; rencana visual dibuat per kelompok 20 adegan. Progres
+ditulis dalam kelompok maksimal 30 adegan dari kerangka yang sudah ditinjau; naskah durasi lebih pendek juga
+mengikuti kerangka babak yang sama. Rencana visual dibuat per kelompok 20 adegan. Progres
 setiap kelompok dikirim ke UI. Hasil kelompok naskah yang selesai disimpan sementara di memori proses untuk
 mencoba ulang kelompok yang gagal selama aplikasi tetap terbuka. Visual yang sudah diterapkan ke proyek tersimpan
 per kelompok dan tidak dibuat ulang pada mode adegan yang belum lengkap.
@@ -148,3 +149,8 @@ jendela tersambung tanpa celah.
 ### Sinkron Whisper melindungi edit kata manual
 Klip dengan `meta.editedWords` dilewati saat sinkron caption biasa. UI menunjukkan jumlah klip yang dilindungi;
 aksi paksa meminta konfirmasi dan menghapus penanda edit manual sebelum menulis kata hasil sinkron.
+
+### Hook disetujui sebelum naskah penuh
+Hook adalah janji cerita, bukan kalimat promosi yang berdiri sendiri. Kreator memilih atau menulis hook terlebih
+dahulu, meninjau kerangka babak yang menjawabnya, lalu naskah dibuat dari kerangka itu. Revisi adegan membawa hook
+dan konteks tetangganya agar perubahan lokal tetap cocok dengan alur utama.

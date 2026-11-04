@@ -4,7 +4,7 @@ import { getFlow2ApiModel } from '@shared/flow2api-catalog'
 import { getImageModel } from '@shared/higgsfield'
 import { DURATIONS, LANGUAGES, clipCountFor, llmName } from '@shared/models'
 import { getStyle } from '@shared/styles'
-import type { AppSettings, KeyStatus, LlmProvider, TtsProvider, VoiceOption } from '@shared/types'
+import type { AppSettings, KeyStatus, LlmProvider, StoryPlan, TtsProvider, VoiceOption } from '@shared/types'
 import { Select } from '../../components/Select'
 import { StylePicker } from '../../components/StylePicker'
 import { Button, Chip, Field, Segmented, confirmDialog, cx } from '../../components/ui'
@@ -111,6 +111,8 @@ export function IdeaStep() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [writer, setWriter] = useState<{ provider: LlmProvider; model: string } | null>(null)
   const [keys, setKeys] = useState<KeyStatus[]>([])
+  const storyPlan = project?.storyPlan ?? null
+  const hookMode = storyPlan?.hookMode ?? 'automatic'
 
   useEffect(() => {
     void window.api.settings.get().then((s) => {
@@ -146,10 +148,65 @@ export function IdeaStep() {
     settings?.defaultVisualProvider === 'flow2api'
       ? getFlow2ApiModel(settings?.flow2apiImageModel, 'image').name
       : getImageModel(project.imageModel).name
+  const hasHook = !!storyPlan?.hook.trim()
+  const hasOutline = !!storyPlan?.acts.length
+  const actionLabel = hasOutline ? (clips.length ? 'Susun ulang naskah' : 'Buat naskah') : hasHook ? 'Susun kerangka cerita' : hookMode === 'automatic' ? 'Buat pilihan hook' : 'Isi hook untuk lanjut'
+  const actionDisabled = !!busy || (!hasOutline && hookMode === 'manual' && !hasHook) || (!hasOutline && hookMode === 'automatic' && !!storyPlan?.hookOptions.length && !hasHook)
 
-  const compose = async (): Promise<void> => {
+  const updateStoryPlan = (patch: Partial<StoryPlan>): void => {
+    if (!project) return
+    const current: StoryPlan = project.storyPlan ?? { hookMode: 'automatic', hookOptions: [], hook: '', title: '', acts: [] }
+    updateProject({ storyPlan: { ...current, ...patch } })
+  }
+
+  const chooseHookMode = (mode: StoryPlan['hookMode']): void => {
+    const current = project.storyPlan ?? { hookMode: mode, hookOptions: [], hook: '', title: '', acts: [] }
+    updateProject({ storyPlan: { ...current, hookMode: mode, hookOptions: mode === 'manual' ? [] : current.hookOptions, hook: mode === 'manual' ? current.hook : '' , acts: [] } })
+  }
+
+  const makeHooks = async (): Promise<void> => {
     if (!project.synopsis.trim()) {
       toast('error', 'Tulis ide cerita atau sinopsis dulu.')
+      return
+    }
+    setBusy(true)
+    setPlanMessage('Mencari pilihan hook…')
+    try {
+      await flush()
+      const hookOptions = await window.api.story.hooks(project.id)
+      updateProject({ storyPlan: { hookMode: 'automatic', hookOptions, hook: hookOptions[0] ?? '', title: '', acts: [] } })
+      toast('success', 'Tiga pilihan hook siap. Pilih atau edit salah satunya dulu.')
+    } catch (e) {
+      toast('error', errorText(e))
+    } finally {
+      setBusy(false)
+      setPlanMessage('')
+    }
+  }
+
+  const makeOutline = async (): Promise<void> => {
+    if (!storyPlan?.hook.trim()) {
+      toast('error', 'Pilih atau tulis hook dulu.')
+      return
+    }
+    setBusy(true)
+    setPlanMessage('Menyusun kerangka cerita…')
+    try {
+      await flush()
+      const outline = await window.api.story.outline(project.id, storyPlan.hook)
+      updateProject({ storyPlan: outline })
+      toast('success', 'Kerangka siap ditinjau. Kamu bisa mengubah judul dan ringkasan tiap babak.')
+    } catch (e) {
+      toast('error', errorText(e))
+    } finally {
+      setBusy(false)
+      setPlanMessage('')
+    }
+  }
+
+  const compose = async (): Promise<void> => {
+    if (!project.storyPlan?.hook.trim() || !project.storyPlan.acts.length) {
+      toast('error', 'Pilih hook dan susun kerangka cerita dulu.')
       return
     }
     if (clips.length) {
@@ -161,7 +218,7 @@ export function IdeaStep() {
       if (!ok) return
     }
     setBusy(true)
-    setPlanMessage('Menyiapkan naskah…')
+    setPlanMessage('Menulis naskah dari kerangka…')
     try {
       await flush()
       const bundle = await window.api.story.script(project.id)
@@ -197,7 +254,7 @@ export function IdeaStep() {
                 rows={5}
                 value={project.synopsis}
                 maxLength={4000}
-                onChange={(e) => updateProject({ synopsis: e.target.value })}
+                onChange={(e) => updateProject({ synopsis: e.target.value, storyPlan: null })}
                 placeholder="Tahun 1336 di istana Majapahit. Gajah Mada bersumpah tidak akan menikmati palapa sebelum Nusantara bersatu…"
                 className="resize-none bg-transparent text-base leading-relaxed outline-none placeholder:text-muted/70"
               />
@@ -207,11 +264,99 @@ export function IdeaStep() {
               </div>
             </div>
 
+            <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-5">
+              <div className="flex flex-wrap items-start justify-between gap-3">
+                <div>
+                  <h2 className="font-display text-xl font-bold">Hook pembuka</h2>
+                  <p className="mt-1 text-[13px] text-ink-2">Pilih pembuka yang ingin dijanjikan ceritamu. Narasi akan dibangun untuk memenuhi hook ini.</p>
+                </div>
+                <Segmented
+                  value={hookMode}
+                  onChange={(v) => chooseHookMode(v as StoryPlan['hookMode'])}
+                  options={[{ id: 'automatic', label: 'Buatkan hook' }, { id: 'manual', label: 'Tulis sendiri' }]}
+                />
+              </div>
+              {hookMode === 'automatic' && storyPlan?.hookOptions.length ? (
+                <div className="flex flex-col gap-2">
+                  {storyPlan.hookOptions.map((hook, i) => (
+                    <button
+                      key={`${i}-${hook}`}
+                      type="button"
+                      aria-pressed={storyPlan.hook === hook}
+                      onClick={() => updateStoryPlan({ hook, acts: [] })}
+                      className={cx(
+                        'rounded-xl border px-4 py-3 text-left text-sm leading-relaxed transition-colors',
+                        storyPlan.hook === hook ? 'border-accent bg-accent-soft text-ink' : 'border-line-2 bg-paper text-ink-2 hover:border-ink-2'
+                      )}
+                    >
+                      <span className="mr-2 font-mono text-xs font-semibold text-accent-dark">{i + 1}</span>{hook}
+                    </button>
+                  ))}
+                  <button type="button" onClick={() => void makeHooks()} disabled={busy} className="self-start text-[13px] font-semibold text-accent-dark hover:underline">
+                    Buat pilihan lain
+                  </button>
+                </div>
+              ) : null}
+              <textarea
+                aria-label="Teks hook pembuka"
+                rows={2}
+                maxLength={500}
+                value={storyPlan?.hook ?? ''}
+                onChange={(e) => updateStoryPlan({ hook: e.target.value, acts: [] })}
+                placeholder={hookMode === 'automatic' ? 'Klik “Buatkan hook” untuk melihat tiga pilihan.' : 'Tulis kalimat pembuka ceritamu…'}
+                className="w-full resize-y rounded-xl border border-line-2 bg-paper px-3.5 py-3 text-sm leading-relaxed outline-none focus:border-ink-2"
+              />
+              {storyPlan?.acts.length ? (
+                <section className="flex flex-col gap-3 border-t border-line pt-4">
+                  <div className="flex items-start justify-between gap-3">
+                    <div>
+                      <h3 className="font-display text-lg font-bold">Kerangka cerita</h3>
+                      <p className="mt-1 text-[13px] text-ink-2">Tinjau alur dan edit ringkasannya sebelum naskah lengkap ditulis.</p>
+                    </div>
+                    <button type="button" onClick={() => void makeOutline()} disabled={busy || !storyPlan.hook.trim()} className="shrink-0 text-[13px] font-semibold text-accent-dark hover:underline disabled:opacity-50">
+                      Susun ulang
+                    </button>
+                  </div>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs font-semibold text-ink-2">Judul sementara</span>
+                    <input
+                      value={storyPlan.title}
+                      onChange={(e) => updateStoryPlan({ title: e.target.value })}
+                      className="rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm outline-none focus:border-ink-2"
+                    />
+                  </label>
+                  <div className="grid gap-2 sm:grid-cols-2">
+                    {storyPlan.acts.map((act, i) => (
+                      <div key={i} className="flex flex-col gap-2 rounded-xl border border-line-2 bg-paper p-3.5">
+                        <div className="flex items-center gap-2">
+                          <span className="grid size-6 shrink-0 place-items-center rounded-full bg-ink text-xs font-semibold text-paper">{i + 1}</span>
+                          <input
+                            aria-label={`Judul babak ${i + 1}`}
+                            value={act.title}
+                            onChange={(e) => updateStoryPlan({ acts: storyPlan.acts.map((a, n) => n === i ? { ...a, title: e.target.value } : a) })}
+                            className="min-w-0 flex-1 bg-transparent text-sm font-semibold outline-none"
+                          />
+                          <span className="shrink-0 text-[11px] text-muted">{act.scenes} adegan</span>
+                        </div>
+                        <textarea
+                          aria-label={`Ringkasan babak ${i + 1}`}
+                          rows={3}
+                          value={act.summary}
+                          onChange={(e) => updateStoryPlan({ acts: storyPlan.acts.map((a, n) => n === i ? { ...a, summary: e.target.value } : a) })}
+                          className="resize-y rounded-lg bg-transparent text-[13px] leading-relaxed text-ink-2 outline-none"
+                        />
+                      </div>
+                    ))}
+                  </div>
+                </section>
+              ) : null}
+            </section>
+
             <div className="flex flex-col gap-2">
               <span className="text-sm font-semibold">Durasi video</span>
               <div className="flex flex-wrap gap-2">
                 {DURATIONS.map((d) => (
-                  <Chip key={d.sec} on={project.durationSec === d.sec} onClick={() => updateProject({ durationSec: d.sec })} className="h-10 px-4">
+                  <Chip key={d.sec} on={project.durationSec === d.sec} onClick={() => updateProject({ durationSec: d.sec, storyPlan: null })} className="h-10 px-4">
                     {d.label}
                   </Chip>
                 ))}
@@ -227,7 +372,7 @@ export function IdeaStep() {
                   label="Bahasa naskah dan suara"
                   size="lg"
                   value={project.language}
-                  onChange={(v) => updateProject({ language: v })}
+                  onChange={(v) => updateProject({ language: v, storyPlan: null })}
                   options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
                 />
               </Field>
@@ -336,8 +481,16 @@ export function IdeaStep() {
             Lihat naskah
           </Button>
         )}
-        <Button variant="primary" size="lg" className="h-[50px]" loading={busy} icon={!busy && <Sparkles className="size-[18px]" />} onClick={() => void compose()}>
-          {busy ? planMessage || 'Menyusun naskah…' : clips.length ? 'Susun ulang naskah' : 'Susun naskah'}
+        <Button
+          variant="primary"
+          size="lg"
+          className="h-[50px]"
+          disabled={actionDisabled}
+          loading={busy}
+          icon={!busy && <Sparkles className="size-[18px]" />}
+          onClick={() => void (hasOutline ? compose() : hasHook ? makeOutline() : makeHooks())}
+        >
+          {busy ? planMessage || 'Menyiapkan…' : actionLabel}
         </Button>
       </footer>
     </div>

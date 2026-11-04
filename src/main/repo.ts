@@ -39,6 +39,7 @@ const toProject = (r: Row): Project => ({
   id: r.id,
   title: r.title,
   synopsis: r.synopsis,
+  storyPlan: r.story_plan_json ? JSON.parse(r.story_plan_json) : null,
   durationSec: r.duration_sec,
   language: r.language,
   aspectRatio: r.aspect_ratio,
@@ -229,11 +230,11 @@ export function saveSnapshot(snap: ProjectSnapshot): number {
   const p = snap.project
   db.transaction(() => {
     db.prepare(
-      `UPDATE projects SET title = @title, synopsis = @synopsis, duration_sec = @durationSec, language = @language,
+      `UPDATE projects SET title = @title, synopsis = @synopsis, story_plan_json = @storyPlan, duration_sec = @durationSec, language = @language,
         aspect_ratio = @aspectRatio, style_id = @styleId, tts_provider = @ttsProvider, tts_voice = @ttsVoice,
         image_model = @imageModel, video_model = @videoModel, video_resolution = @videoResolution, status = @status, step = @step, editor_json = @editor, updated_at = @now
        WHERE id = @id`
-    ).run({ ...p, editor: JSON.stringify(p.editor), now })
+    ).run({ ...p, storyPlan: p.storyPlan ? JSON.stringify(p.storyPlan) : null, editor: JSON.stringify(p.editor), now })
 
     const charIds = snap.characters.map((c) => c.id)
     db.prepare(
@@ -304,9 +305,9 @@ export function duplicateProject(id: string): ProjectSummary {
   db.transaction(() => {
     const p = db.prepare('SELECT * FROM projects WHERE id = ?').get(id) as Row
     db.prepare(
-      `INSERT INTO projects (id, title, synopsis, duration_sec, language, aspect_ratio, style_id, tts_provider, tts_voice,
+      `INSERT INTO projects (id, title, synopsis, story_plan_json, duration_sec, language, aspect_ratio, style_id, tts_provider, tts_voice,
          image_model, video_model, video_resolution, status, step, cover_asset_id, editor_json, created_at, updated_at)
-       SELECT @newId, @title, synopsis, duration_sec, language, aspect_ratio, style_id, tts_provider, tts_voice,
+       SELECT @newId, @title, synopsis, story_plan_json, duration_sec, language, aspect_ratio, style_id, tts_provider, tts_voice,
          image_model, video_model, video_resolution, status, step, @cover, editor_json, @now, @now FROM projects WHERE id = @id`
     ).run({ newId, id, title: `${p.title} (salinan)`, cover: mapId(p.cover_asset_id), now })
     for (const a of src.assets) {

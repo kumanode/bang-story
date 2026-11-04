@@ -3,6 +3,7 @@ import type { AppSettings } from '@shared/types'
 import { getDb } from './db'
 
 export const DEFAULT_SETTINGS: AppSettings = {
+  theme: 'system',
   defaultTtsProvider: 'gemini',
   defaultLanguage: 'id',
   exportFolder: null,
@@ -36,6 +37,9 @@ export function getSettings(): AppSettings {
   out.videoModel = getVideoModel(out.videoModel).id
   if (out.defaultVisualProvider !== 'higgsfield' && out.defaultVisualProvider !== 'flow2api') {
     out.defaultVisualProvider = 'higgsfield'
+  }
+  if (out.theme !== 'light' && out.theme !== 'dark' && out.theme !== 'system') {
+    out.theme = 'system'
   }
   return out
 }

@@ -166,6 +166,7 @@ export interface Project {
   id: string
   title: string
   synopsis: string
+  storyPlan: StoryPlan | null
   durationSec: number
   language: string
   aspectRatio: AspectRatio
@@ -183,6 +184,20 @@ export interface Project {
   editor: EditorSettings
   createdAt: number
   updatedAt: number
+}
+
+export interface StoryAct {
+  title: string
+  summary: string
+  scenes: number
+}
+
+export interface StoryPlan {
+  hookMode: 'automatic' | 'manual'
+  hookOptions: string[]
+  hook: string
+  title: string
+  acts: StoryAct[]
 }
 
 export interface Character {
@@ -351,7 +366,11 @@ export interface VoiceOption {
   previewUrl?: string | null
 }
 
+export type ThemePreference = 'system' | 'light' | 'dark'
+export type ActiveTheme = 'light' | 'dark'
+
 export interface AppSettings {
+  theme: ThemePreference
   defaultTtsProvider: TtsProvider
   defaultLanguage: string
   exportFolder: string | null

@@ -875,7 +875,7 @@ export function Timeline({
                   aria-label={`Suara klip ${it.index + 1}`}
                   aria-pressed={is('voice', it.clip.id)}
                   className={cx(
-                    'absolute top-0 flex h-10 cursor-pointer select-none items-center overflow-hidden rounded-md border border-line-2 bg-[#EFEAE2] px-1 hover:border-ink-2',
+                    'absolute top-0 flex h-10 cursor-pointer select-none items-center overflow-hidden rounded-md border border-line-2 bg-draft px-1 hover:border-ink-2',
                     is('voice', it.clip.id) && SELECTED
                   )}
                   style={{ left: (it.start + span.startMs / 1000) * pps + 1, width: Math.max(4, (span.playMs / 1000) * pps - 2) }}

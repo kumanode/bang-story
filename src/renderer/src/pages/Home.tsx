@@ -7,6 +7,7 @@ import { Logo } from '../components/Logo'
 import { Select, type SelectOption } from '../components/Select'
 import { StyleSwatch } from '../components/StyleArt'
 import { StyleMenu } from '../components/StyleMenu'
+import { ThemeToggle } from '../components/ThemeToggle'
 import { Badge, Button, Chip, IconButton, Menu, confirmDialog, cx } from '../components/ui'
 import { errorText, mmss, relativeTime } from '../lib/format'
 import { TTS_NAMES, ttsReadiness, usableTts } from '../lib/keys'
@@ -193,6 +194,7 @@ export function Home() {
           />
         </label>
         <div className="flex-1" />
+        <ThemeToggle />
         <Button icon={<SlidersHorizontal className="size-[18px]" />} onClick={() => go({ name: 'settings', back: { name: 'home' } })}>
           Pengaturan
           {setupIssues.length > 0 && <span className="size-2 rounded-full bg-accent" />}

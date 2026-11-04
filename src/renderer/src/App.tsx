@@ -6,6 +6,7 @@ import { ProjectPage } from './pages/project/ProjectPage'
 import { Settings } from './pages/Settings'
 import { useApp } from './store/app'
 import { useProject } from './store/project'
+import { useTheme } from './lib/theme'
 
 const KIND_LABEL: Record<string, string> = {
   image: 'Gambar',
@@ -17,6 +18,8 @@ const KIND_LABEL: Record<string, string> = {
 
 export function App() {
   const route = useApp((s) => s.route)
+
+  useEffect(() => useTheme.getState().init(), [])
 
   useEffect(() => {
     const p = useProject.getState

@@ -21,6 +21,7 @@ import type {
   ProjectBundle,
   ProjectSnapshot,
   ProjectSummary,
+  StoryPlan,
   TtsProvider,
   ThumbnailConcept,
   ThumbnailRequest,
@@ -39,8 +40,14 @@ export interface StudioApi {
     duplicate(id: string): Promise<ProjectSummary>
   }
   story: {
-    /** Idea → scene-by-scene script (story and voice-over). */
+    /** Creates hook options for the project idea. */
+    hooks(projectId: string): Promise<string[]>
+    /** Creates an editable act outline around the selected hook. */
+    outline(projectId: string, hook: string): Promise<StoryPlan>
+    /** Idea → scene-by-scene script (story and voice-over), using the reviewed plan. */
     script(projectId: string): Promise<ProjectBundle>
+    /** Revises one scene while preserving continuity with the surrounding story. */
+    reviseScene(projectId: string, clipId: string, instruction: string): Promise<{ story: string; narration: string }>
     /** Script → one image plan per scene; "missing" skips scenes whose plan still matches their story. */
     visuals(projectId: string, mode: 'missing' | 'all'): Promise<ProjectBundle>
     /** A background-music prompt that fits the finished script, for use in Suno or another music AI. */

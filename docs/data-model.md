@@ -36,6 +36,7 @@ dalam transaksi, lalu `user_version` dinaikkan.
 | 8 | `clips.filter` |
 | 9 | `characters.tts_voice` |
 | 10 | `clips.speaker_id`, `characters.tts_provider` |
+| 11 | `projects.story_plan_json` untuk hook dan kerangka cerita yang ditinjau |
 
 **Aturan:** tambahkan migrasi baru di akhir. Jangan mengubah migrasi yang sudah ada, karena pengguna lama sudah
 menjalankannya.
@@ -45,6 +46,7 @@ menjalankannya.
 | Properti | Arti |
 |---|---|
 | `title`, `synopsis` | judul (diisi AI saat menulis naskah) dan ide cerita |
+| `storyPlan` | hook terpilih, opsi hook otomatis, judul sementara, dan kerangka babak yang bisa ditinjau sebelum naskah dibuat; disimpan sebagai JSON di `story_plan_json` |
 | `durationSec`, `language`, `aspectRatio` | target durasi, bahasa naskah/suara, `16:9` atau `9:16` |
 | `styleId` | gaya visual (`src/shared/styles.ts`, 24 gaya) |
 | `ttsProvider`, `ttsVoice` | `gemini` atau `elevenlabs` + ID suara |

@@ -31,6 +31,38 @@
   --shadow-ink: 2px 2px 0 #1f1d1a;
   --shadow-ink-md: 3px 3px 0 #1f1d1a;
   --shadow-ink-lg: 4px 4px 0 #1f1d1a;
+  --shadow-ink-xl: 6px 6px 0 #1f1d1a;
+}
+
+html.dark {
+  color-scheme: dark;
+  --color-paper: #141311;
+  --color-surface: #1e1c19;
+  --color-sand: #282521;
+  --color-ink: #f5f2eb;
+  --color-ink-2: #aba296;
+  --color-muted: #7a7368;
+  --color-line: #2f2a24;
+  --color-line-2: #403931;
+  --color-line-3: #5a5145;
+  --color-accent: #e24a24;
+  --color-accent-dark: #b83818;
+  --color-accent-soft: #2d1914;
+  --color-sun: #f6c035;
+  --color-sun-soft: #32270e;
+  --color-sun-ink: #fee085;
+  --color-ok-soft: #152a1a;
+  --color-ok-ink: #76df88;
+  --color-info-soft: #13253b;
+  --color-info-ink: #7eb7f5;
+  --color-bad-soft: #381614;
+  --color-bad-ink: #f87171;
+  --color-draft: #22201c;
+
+  --shadow-ink: 2px 2px 0 #080706;
+  --shadow-ink-md: 3px 3px 0 #080706;
+  --shadow-ink-lg: 4px 4px 0 #080706;
+  --shadow-ink-xl: 6px 6px 0 #080706;
 }
 
 @font-face {
@@ -154,6 +186,7 @@
   }
   ::selection {
     background: var(--color-sun);
+    color: #1f1d1a;
   }
   :focus-visible {
     outline: 2px solid var(--color-accent);

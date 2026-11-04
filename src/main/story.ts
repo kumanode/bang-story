@@ -3,7 +3,7 @@ import { formatChapters } from '@shared/chapters'
 import { LANGUAGES, clipCountFor } from '@shared/models'
 import { estimateNarrationMs, needsVisual } from '@shared/script'
 import { getStyle } from '@shared/styles'
-import type { CameraPresetId, Clip, MotionStrength, MusicPrompt, ProjectBundle, ThumbnailConcept, TransitionId, YoutubeMetadata } from '@shared/types'
+import type { CameraPresetId, Clip, MotionStrength, MusicPrompt, ProjectBundle, StoryAct, StoryPlan, ThumbnailConcept, TransitionId, YoutubeMetadata } from '@shared/types'
 import { applyVisuals, charactersOf, clipsOf, getBundle, getProject, replaceScript, type SceneVisual } from './repo'
 import { generateJson } from './services/llm'
 import { emit } from './events'
@@ -40,7 +40,7 @@ const SCRIPT_SCHEMA = {
           narration: {
             type: 'string',
             description:
-              'Voice-over for this scene in the target language, 10 to 18 spoken words, natural spoken rhythm. May contain one or two English vocal tags in angle brackets.'
+              'Natural voice-over for this scene in the target language, sized for its target duration. Keep the opening hook concise. May contain one or two English vocal tags in angle brackets.'
           }
         },
         required: ['title', 'story', 'narration']
@@ -70,6 +70,45 @@ const SCRIPT_OUTLINE_SCHEMA = {
   }, required: ['title', 'acts']
 }
 
+const HOOK_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { hooks: { type: 'array', items: { type: 'string' } } },
+  required: ['hooks']
+}
+
+const REVISED_SCENE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    story: { type: 'string', description: 'One or two sentences describing what happens in this scene.' },
+    narration: { type: 'string', description: 'Natural voice-over in the target language, sized for this scene.' }
+  },
+  required: ['story', 'narration']
+}
+
+interface HookOptions { hooks?: string[] }
+
+function balanceActs(source: ScriptOutline['acts'], count: number): StoryAct[] {
+  const acts = (source ?? []).slice(0, count).map((a, i) => ({
+    title: str(a.title) || `Babak ${i + 1}`,
+    summary: str(a.summary),
+    scenes: Math.max(1, Math.round(Number(a.scenes) || 1))
+  }))
+  if (!acts.length) throw new Error('AI belum menghasilkan kerangka cerita. Coba susun kerangka lagi.')
+  let delta = count - acts.reduce((n, a) => n + a.scenes, 0)
+  if (delta >= 0) acts[acts.length - 1].scenes += delta
+  else {
+    for (let i = acts.length - 1; i >= 0 && delta < 0; i--) {
+      const reduce = Math.min(acts[i].scenes - 1, -delta)
+      acts[i].scenes -= reduce
+      delta += reduce
+    }
+    if (delta < 0) acts[acts.length - 1].scenes += delta
+  }
+  return acts
+}
+
 interface PendingLongScript {
   fingerprint: string
   title: string
@@ -80,113 +119,136 @@ interface PendingLongScript {
 // If a model call fails, successful groups remain available for the user's next retry in this app session.
 const pendingLongScripts = new Map<string, PendingLongScript>()
 
-/** Writes the scene-by-scene script (story and voice-over) that the user reviews before any visuals exist. */
-export async function generateScript(projectId: string): Promise<ProjectBundle> {
+/** Offers several openings so the creator can choose the promise the story will fulfill. */
+export async function generateHooks(projectId: string): Promise<string[]> {
   const project = getProject(projectId)
   if (!project.synopsis.trim()) throw new Error('Tulis ide cerita atau sinopsis dulu.')
   const lang = languageOf(project.language)
-  const count = clipCountFor(project.durationSec)
+  const system = [
+    'You write opening hooks for faceless YouTube stories and explainers.',
+    'Create three distinct, truthful hooks in the target language: one vivid cold open, one curiosity question, and one surprising contradiction or consequence.',
+    'Each hook is one short spoken line that can be shown as a concrete opening image.',
+    'Do not invent factual claims for history or science topics. Do not use generic greetings or promise a twist the idea cannot deliver.',
+    `Write in ${lang}.`
+  ].join(' ')
+  const result = await generateJson<HookOptions>({
+    system,
+    prompt: `Idea / synopsis:\n${project.synopsis}\n\nTarget video length: about ${project.durationSec} seconds. Return exactly three options.`,
+    schema: HOOK_SCHEMA,
+    name: 'story-hooks'
+  })
+  const hooks = (result.hooks ?? []).map(str).filter(Boolean).slice(0, 3)
+  if (hooks.length < 3) throw new Error('AI belum menghasilkan tiga pilihan hook. Coba lagi.')
+  return hooks
+}
 
+/** Builds the reviewable act outline around the hook the creator chose. */
+export async function generateOutline(projectId: string, hook: string): Promise<StoryPlan> {
+  const project = getProject(projectId)
+  const chosenHook = str(hook)
+  if (!project.synopsis.trim()) throw new Error('Tulis ide cerita atau sinopsis dulu.')
+  if (!chosenHook) throw new Error('Pilih atau tulis hook dulu.')
+  const lang = languageOf(project.language)
+  const count = clipCountFor(project.durationSec)
+  const previousPlan = project.storyPlan
+  const system = [
+    'You are a narrative architect for faceless YouTube stories and explainers.',
+    'Make a coherent outline that starts by honoring the chosen hook, builds a clear cause-and-effect chain, escalates stakes or understanding, and resolves the hook promise.',
+    'Use 3 to 6 acts, no more acts than scenes, with each act summary specific enough to draft scenes from.',
+    'Keep history and science facts accurate; mark uncertainty in the summary rather than inventing evidence.',
+    `Write the title and summaries in ${lang}.`
+  ].join(' ')
+  const outline = await generateJson<ScriptOutline>({
+    system,
+    prompt: `Idea / synopsis:\n${project.synopsis}\n\nChosen opening hook:\n${chosenHook}\n\nTarget video length: about ${project.durationSec} seconds.\nDistribute exactly ${count} scenes across the acts. The opening act must establish the hook and its central question; the final act must answer it. Return a short video title and the outline only.`,
+    schema: SCRIPT_OUTLINE_SCHEMA,
+    name: 'story-outline'
+  })
+  const plan: StoryPlan = {
+    hookMode: previousPlan?.hookMode ?? 'manual',
+    hookOptions: previousPlan?.hookOptions ?? [],
+    hook: chosenHook,
+    title: str(outline.title) || project.title,
+    acts: balanceActs(outline.acts, count)
+  }
+  return plan
+}
+
+/** Writes scenes from the reviewed hook and outline. */
+export async function generateScript(projectId: string): Promise<ProjectBundle> {
+  const project = getProject(projectId)
+  if (!project.synopsis.trim()) throw new Error('Tulis ide cerita atau sinopsis dulu.')
+  const plan = project.storyPlan
+  if (!plan?.hook.trim() || !plan.acts.length) throw new Error('Pilih hook dan susun kerangka cerita dulu.')
+  const lang = languageOf(project.language)
+  const count = clipCountFor(project.durationSec)
   const system = [
     'You are a scriptwriter for faceless YouTube storytelling and explainer videos.',
-    'You turn an idea into a sequence of short scenes. Each scene has one line of voice-over.',
-    'The first scene is a strong hook. The story has a clear beginning, rising tension and a satisfying ending. The last scene can invite viewers to subscribe.',
+    'Turn the reviewed act outline into a sequence of short scenes. Each scene has a concrete story action and one natural voice-over passage.',
+    'Scene 1 of the complete script must start with the exact chosen hook. Continue its question immediately and deliver its answer by the ending; never make a false promise.',
+    'Every scene should add information, change a decision, increase stakes, or prepare a payoff. Avoid repeated exposition and generic transitions.',
     'Keep facts accurate for history and science topics, and always call each character by the same name.',
-    'The narration is voiced by an expressive text-to-speech model. Where it helps the delivery, add a few English vocal tags in angle brackets inside the narration, such as <short pause>, <long pause>, <chuckles>, <sigh>, <gasp> or <whispers>. Use them sparingly, at most one or two per scene, and never other markup.',
-    `Write everything in ${lang}, except the vocal tags, which stay in English.`
+    'Where it helps delivery, add at most one English vocal tag in angle brackets, such as <short pause>, <long pause>, <chuckles>, <sigh>, <gasp> or <whispers>. Never add other markup.',
+    `Write all story notes and narration in ${lang}, except vocal tags, which stay in English.`
   ].join(' ')
-  const prompt = [
-    `Idea / synopsis:\n${project.synopsis}`,
-    `Target video length: about ${project.durationSec} seconds.`,
-    `Write exactly ${count} scenes.`
-  ].join('\n\n')
-
-  let title = project.title
-  let rawScenes: { title?: string; story?: string; narration?: string }[]
-  if (count <= 60) {
-    const plan = await generateJson<ScriptPlan>({ system, prompt, schema: SCRIPT_SCHEMA, name: 'script' })
-    title = str(plan.title) || title
-    rawScenes = (plan.scenes ?? []).filter((c) => str(c.narration) || str(c.story))
-  } else {
-    const fingerprint = JSON.stringify([project.synopsis, project.durationSec, project.language])
-    let pending = pendingLongScripts.get(projectId)
-    if (!pending || pending.fingerprint !== fingerprint) {
-      const outline = await generateJson<ScriptOutline>({
-        system: `${system} First design a coherent act outline for a long video. Distribute scenes across 5 to 10 acts and make the counts sum to exactly ${count}.`,
-        prompt: `${prompt}\n\nReturn only the video title and the act outline. Each act needs a short summary and an exact scene count; all counts must sum to ${count}.`,
-        schema: SCRIPT_OUTLINE_SCHEMA,
-        name: 'script-outline'
-      })
-      const acts = (outline.acts ?? []).map((a, i) => ({
-        title: str(a.title) || `Babak ${i + 1}`,
-        summary: str(a.summary),
-        scenes: Math.max(1, Math.round(Number(a.scenes) || 1))
-      }))
-      if (!acts.length) throw new Error('Model tidak menghasilkan kerangka babak. Coba lagi.')
-      // Keep the outline's pacing while making the requested scene count exact.
-      const sum = acts.reduce((n, a) => n + a.scenes, 0)
-      let delta = count - sum
-      if (delta >= 0) acts[acts.length - 1].scenes += delta
-      else {
-        for (let i = acts.length - 1; i >= 0 && delta < 0; i--) {
-          const reduce = Math.min(acts[i].scenes - 1, -delta)
-          acts[i].scenes -= reduce
-          delta += reduce
-        }
-        if (delta < 0) acts[acts.length - 1].scenes += delta
-      }
-      pending = { fingerprint, title: str(outline.title) || title, acts, groups: new Map() }
-      pendingLongScripts.set(projectId, pending)
+  const groups: { from: number; count: number; act: StoryAct }[] = []
+  let offset = 0
+  for (const act of plan.acts) {
+    let left = act.scenes
+    while (left > 0) {
+      const take = Math.min(30, left)
+      groups.push({ from: offset, count: take, act })
+      offset += take
+      left -= take
     }
-    title = pending.title
-    const groups: { from: number; count: number; act: (typeof pending.acts)[number] }[] = []
-    let offset = 0
-    for (const act of pending.acts) {
-      let left = act.scenes
-      while (left > 0) {
-        const take = Math.min(30, left)
-        groups.push({ from: offset, count: take, act })
-        offset += take
-        left -= take
-      }
-    }
-    // Spoken words that fill each scene's share of the target length, at the pace estimateNarrationMs assumes.
-    const wordsPerScene = Math.max(8, (project.durationSec / count - 0.6) * 2.6)
-    const wordsLow = Math.round(wordsPerScene * 0.85)
-    const wordsHigh = Math.round(wordsPerScene * 1.15)
-    const built: { title?: string; story?: string; narration?: string }[] = []
-    for (let i = 0; i < groups.length; i++) {
-      const group = groups[i]
-      let rows = pending.groups.get(i)
-      if (!rows) {
-        emit.storyProgress({ projectId, message: `Menulis adegan ${group.from + 1}–${group.from + group.count} dari ${count}` })
-        const previous = [...pending.groups.values()].flat().slice(-2)
-        const groupPrompt = [
-          `Idea / synopsis:\n${project.synopsis}`,
-          `Target video length: about ${project.durationSec} seconds. Write scenes ${group.from + 1} through ${group.from + group.count} (exactly ${group.count} scenes).`,
-          `Video title: ${pending.title}`,
-          `Act: ${group.act.title}\nAct summary: ${group.act.summary}`,
-          previous.length ? `Continue naturally from these last scenes:\n${previous.map((s) => `${s.title}: ${s.story} Narration: ${s.narration}`).join('\n')}` : 'This is the opening group; start with a strong hook.',
-          `Write all scene titles, story notes and narration in ${lang}. Preserve character names and causal continuity. Narration should be ${wordsLow} to ${wordsHigh} spoken words per scene.`
-        ].join('\n\n')
-        const plan = await generateJson<ScriptPlan>({ system, prompt: groupPrompt, schema: SCRIPT_SCHEMA, name: `script-part-${i + 1}` })
-        // Extra scenes would shift every later group, so they are dropped; too few means the group is retried.
-        rows = (plan.scenes ?? []).filter((c) => str(c.narration) || str(c.story)).slice(0, group.count)
-        if (rows.length < group.count) throw new Error(`Babak ${i + 1} menghasilkan ${rows.length} dari ${group.count} adegan. Coba lagi untuk melanjutkan.`)
-        pending.groups.set(i, rows)
-      }
-      built.push(...rows)
-      emit.storyProgress({ projectId, message: `Naskah ${Math.min(count, group.from + group.count)} dari ${count} adegan selesai` })
-    }
-    rawScenes = built
-    pendingLongScripts.delete(projectId)
   }
-  const scenes = rawScenes.filter((c) => str(c.narration) || str(c.story))
+  const fingerprint = JSON.stringify([project.synopsis, project.durationSec, project.language, plan])
+  let pending = count > 60 ? pendingLongScripts.get(projectId) : undefined
+  if (!pending || pending.fingerprint !== fingerprint) {
+    pending = { fingerprint, title: plan.title || project.title, acts: plan.acts, groups: new Map() }
+    if (count > 60) pendingLongScripts.set(projectId, pending)
+  }
+  const wordsPerScene = Math.max(8, (project.durationSec / count - 0.6) * 2.6)
+  const wordsLow = Math.round(wordsPerScene * 0.85)
+  const wordsHigh = Math.round(wordsPerScene * 1.15)
+  const built: { title?: string; story?: string; narration?: string }[] = []
+  for (let i = 0; i < groups.length; i++) {
+    const group = groups[i]
+    let rows = pending.groups.get(i)
+    if (!rows) {
+      emit.storyProgress({ projectId, message: `Menulis adegan ${group.from + 1}–${group.from + group.count} dari ${count}` })
+      const previous = [...pending.groups.values()].flat().slice(-2)
+      const groupPrompt = [
+        `Idea / synopsis:\n${project.synopsis}`,
+        `Target video length: about ${project.durationSec} seconds. Write scenes ${group.from + 1} through ${group.from + group.count} (exactly ${group.count} scenes).`,
+        `Video title: ${pending.title}`,
+        group.from === 0
+          ? `Chosen hook (use this exact wording at the start of scene 1 narration): ${plan.hook}`
+          : `The opening hook has already been established: ${plan.hook}\nContinue its central question without repeating the hook, and reserve its answer for the ending.`,
+        `Complete story outline:\n${plan.acts.map((a, n) => `${n + 1}. ${a.title} (${a.scenes} scenes): ${a.summary}`).join('\n')}`,
+        `Current act: ${group.act.title}\nAct summary: ${group.act.summary}`,
+        previous.length ? `Continue naturally from these last scenes:\n${previous.map((s) => `${s.title}: ${s.story} Narration: ${s.narration}`).join('\n')}` : 'This is the opening group. Begin with the chosen hook, then establish the situation and the question it raises.',
+        `Write all scene titles, story notes and narration in ${lang}. Preserve character names and causal continuity. Narration should be ${wordsLow} to ${wordsHigh} spoken words per scene, except the opening hook may be shorter.`
+      ].join('\n\n')
+      const result = await generateJson<ScriptPlan>({ system, prompt: groupPrompt, schema: SCRIPT_SCHEMA, name: `script-part-${i + 1}` })
+      rows = (result.scenes ?? []).filter((c) => str(c.narration) || str(c.story)).slice(0, group.count)
+      if (rows.length < group.count) throw new Error(`Babak ${i + 1} menghasilkan ${rows.length} dari ${group.count} adegan. Coba lagi untuk melanjutkan.`)
+      if (group.from === 0 && rows[0]) {
+        const narration = str(rows[0].narration)
+        if (!narration.toLocaleLowerCase().startsWith(plan.hook.toLocaleLowerCase())) rows[0].narration = `${plan.hook} ${narration}`.trim()
+      }
+      pending.groups.set(i, rows)
+    }
+    built.push(...rows)
+    emit.storyProgress({ projectId, message: `Naskah ${Math.min(count, group.from + group.count)} dari ${count} adegan selesai` })
+  }
+  if (count > 60) pendingLongScripts.delete(projectId)
+  const scenes = built.filter((c) => str(c.narration) || str(c.story))
   if (!scenes.length) throw new Error('Model tidak menghasilkan adegan. Coba lagi atau pilih model lain di Pengaturan.')
 
   replaceScript(
     projectId,
-    title,
+    plan.title || project.title,
     scenes.map((c, i) => ({
       title: str(c.title) || `Adegan ${i + 1}`,
       story: str(c.story),
@@ -195,6 +257,43 @@ export async function generateScript(projectId: string): Promise<ProjectBundle> 
     }))
   )
   return getBundle(projectId)
+}
+
+/** Rewrites one scene with nearby context so edits still fit the selected hook and act outline. */
+export async function reviseScene(projectId: string, clipId: string, instruction: string): Promise<{ story: string; narration: string }> {
+  const project = getProject(projectId)
+  const clips = clipsOf(projectId)
+  const index = clips.findIndex((c) => c.id === clipId)
+  if (index < 0) throw new Error('Adegan yang dipilih tidak ditemukan.')
+  const request = str(instruction)
+  if (!request) throw new Error('Tulis perubahan yang kamu inginkan dulu.')
+  const clip = clips[index]
+  const lang = languageOf(project.language)
+  const context = clips.slice(Math.max(0, index - 1), index + 2).map((c, i) =>
+    `${Math.max(0, index - 1) + i + 1}. ${c.title}\nStory: ${c.story}\nNarration: ${c.narration}`
+  ).join('\n\n')
+  const result = await generateJson<{ story?: string; narration?: string }>({
+    system: [
+      'You are a script editor revising one scene in a faceless YouTube story or explainer.',
+      'Follow the creator instruction while preserving established facts, character names, causal continuity, and the neighboring scenes.',
+      'Keep the narration natural to speak and close to the original scene length. Do not alter the rest of the story.',
+      `Write the replacement story note and narration in ${lang}.`
+    ].join(' '),
+    prompt: [
+      `Idea / synopsis:\n${project.synopsis}`,
+      project.storyPlan?.hook && `Opening hook: ${project.storyPlan.hook}`,
+      project.storyPlan?.acts.length && `Reviewed outline:\n${project.storyPlan.acts.map((a) => `${a.title}: ${a.summary}`).join('\n')}`,
+      `Context around the selected scene:\n${context}`,
+      `Selected scene to revise:\n${index + 1}. ${clip.title}\nStory: ${clip.story}\nNarration: ${clip.narration}`,
+      `Creator instruction: ${request}`
+    ].filter(Boolean).join('\n\n'),
+    schema: REVISED_SCENE_SCHEMA,
+    name: 'revise-scene'
+  })
+  const story = str(result.story)
+  const narration = str(result.narration)
+  if (!story || !narration) throw new Error('AI belum menghasilkan revisi adegan yang lengkap. Coba lagi.')
+  return { story, narration }
 }
 
 // ---------- step 2 → 3: visuals for the reviewed script ----------
