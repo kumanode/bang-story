@@ -24,24 +24,24 @@ function friendlyError(e: unknown, baseUrl: string): ApiError {
     return new ApiError(
       `Tidak bisa terhubung ke Flow2API di ${baseUrl}. Pastikan server Flow2API sudah dijalankan (misal lewat Docker).`,
       503,
-      true
+      false
     )
   }
   if (/AbortError|Dibatalkan/i.test(err.name) || /aborted/i.test(msg)) {
     return new ApiError('Permintaan dibatalkan', 499)
   }
   if (/ETIMEDOUT|timeout/i.test(msg)) {
-    return new ApiError('Flow2API terlalu lama merespons (timeout). Coba lagi nanti.', 408, true)
+    return new ApiError('Flow2API terlalu lama merespons sebelum status permintaan diketahui. Hasil mungkin belum diketahui; periksa server sebelum mencoba lagi.', 408)
   }
   return new ApiError(`Flow2API gagal: ${msg}`, 500)
 }
 
-function parseHttpError(status: number, detail: string): ApiError {
+function parseHttpError(status: number, detail: string, retryAfterMs?: number): ApiError {
   if (status === 401) {
     return new ApiError('Token Flow2API tidak valid atau ditolak. Periksa API key di Pengaturan.', 401)
   }
   if (status === 429) {
-    return new ApiError('Flow2API sedang membatasi permintaan (rate limit). Tunggu sebentar lalu coba lagi.', 429, true)
+    return new ApiError('Flow2API sedang membatasi permintaan (rate limit). Tunggu sebentar lalu coba lagi.', 429, true, retryAfterMs)
   }
   if (/cookie|session|login|unauthorized|google/i.test(detail)) {
     return new ApiError('Sesi akun Google di Flow2API kedaluwarsa. Perbarui cookie di dashboard Flow2API.', status)
@@ -68,7 +68,7 @@ function parseHttpError(status: number, detail: string): ApiError {
     return new ApiError('Kuota akun di Flow2API telah habis. Tambahkan akun Google baru di dashboard Flow2API.', status)
   }
   if (status >= 500) {
-    return new ApiError(`Server Flow2API mengalami kesalahan (${status}): ${detail}`, status, true)
+    return new ApiError(`Server Flow2API mengalami kesalahan (${status}): ${detail}`, status, status === 503, retryAfterMs)
   }
   return new ApiError(`Flow2API menolak permintaan (${status}): ${detail}`, status)
 }
@@ -118,6 +118,7 @@ async function streamCompletion(
   const url = `${base}/chat/completions`
 
   let res: Response
+  const requestStartedAt = Date.now()
   try {
     res = await fetch(url, {
       method: 'POST',
@@ -135,17 +136,26 @@ async function streamCompletion(
 
   if (!res.ok) {
     const detail = await readError(res)
-    throw parseHttpError(res.status, detail)
+    const header = res.headers.get('retry-after')
+    const retryAfterSeconds = header ? Number(header) : Number.NaN
+    const retryAfterDate = header && !Number.isFinite(retryAfterSeconds) ? Date.parse(header) : Number.NaN
+    const retryAfterMs = Number.isFinite(retryAfterSeconds)
+      ? Math.max(0, retryAfterSeconds * 1000)
+      : Number.isFinite(retryAfterDate)
+        ? Math.max(0, retryAfterDate - Date.now())
+        : undefined
+    throw parseHttpError(res.status, detail, retryAfterMs)
   }
 
   if (!res.body) {
-    throw new Error('Flow2API tidak mengembalikan konten respons')
+    throw new ApiError('Flow2API tidak mengembalikan isi stream. Hasil mungkin belum diketahui; permintaan tidak diulang otomatis.', 598)
   }
 
   const reader = res.body.getReader()
   const decoder = new TextDecoder('utf-8')
   let accumulatedText = ''
   let buffer = ''
+  let streamEnded = false
   // Flow2API reports progress and failure text in reasoning_content; kept so an empty result can say why.
   let lastStatus = ''
   const started = Date.now()
@@ -173,16 +183,23 @@ async function streamCompletion(
 
   try {
     for (;;) {
-      const { done, value } = await reader.read()
-      if (done) break
+      let done: boolean
+      let value: Uint8Array | undefined
+      try {
+        ;({ done, value } = await reader.read())
+      } catch {
+        throw new ApiError('Koneksi Flow2API terputus setelah generasi dimulai. Hasil mungkin belum diketahui dan permintaan tidak diulang otomatis; periksa server sebelum mencoba lagi.', 598)
+      }
+      if (done) {
+        streamEnded = true
+        break
+      }
 
       const elapsed = Date.now() - started
       const chunk = decoder.decode(value, { stream: true })
       buffer += chunk
 
-      // Update progress based on elapsed time (smooth asymptote towards 92%)
-      const progress = 0.15 + 0.77 * (1 - Math.exp(-elapsed / 50_000))
-      onProgress?.(progress, progressLabel)
+      onProgress?.(0.12, `${progressLabel} · ${Math.floor(elapsed / 1000)} dtk`)
 
       const lines = buffer.split('\n')
       buffer = lines.pop() ?? ''
@@ -192,11 +209,19 @@ async function streamCompletion(
         if (!trimmed || trimmed.startsWith(':')) continue
         if (trimmed === 'data: [DONE]') continue
 
-        if (trimmed.startsWith('data: ')) readChunk(trimmed.slice(6).trim())
+        if (trimmed.startsWith('data: ')) {
+          try {
+            readChunk(trimmed.slice(6).trim())
+          } catch (e) {
+            if (e instanceof ApiError) throw new ApiError(`${e.message} Hasil mungkin belum diketahui; permintaan tidak diulang otomatis.`, e.status)
+            throw e
+          }
+        }
       }
     }
   } finally {
     reader.releaseLock()
+    console.info('[flow2api] stream finished', { elapsedMs: Date.now() - requestStartedAt, endedNormally: streamEnded })
   }
 
   // Handle any remaining buffered content or non-streaming JSON responses
@@ -240,8 +265,9 @@ async function streamCompletionWithRetry(
       if (signal?.aborted) throw e
       const isRetryable = e instanceof ApiError && e.retryable
       if (attempt < maxAttempts && isRetryable) {
-        const delayMs = attempt * 3000
-        onProgress?.(0.05, `Koneksi Flow2API terputus atau sibuk. Mencoba ulang (${attempt}/${maxAttempts - 1})...`)
+        const jitter = Math.floor(Math.random() * 500)
+        const delayMs = Math.max(e.retryAfterMs ?? 0, attempt * 3000) + jitter
+        onProgress?.(0.08, `Server Flow2API menolak sebelum generasi dimulai. Mencoba ulang (${attempt}/${maxAttempts - 1})…`)
         await sleep(delayMs, signal)
         continue
       }
@@ -259,6 +285,15 @@ export interface GenerateImageOptions {
   onProgress?: (fraction: number, message: string) => void
 }
 
+function imageMime(bytes: Buffer): string {
+  if (bytes.length >= 8 && bytes.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]))) return 'image/png'
+  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg'
+  if (bytes.length >= 12 && bytes.toString('ascii', 0, 4) === 'RIFF' && bytes.toString('ascii', 8, 12) === 'WEBP') return 'image/webp'
+  throw new Error('Format gambar referensi tidak didukung. Gunakan PNG, JPEG, atau WebP.')
+}
+
+const imageDataUrl = (bytes: Buffer): string => `data:${imageMime(bytes)};base64,${bytes.toString('base64')}`
+
 /**
  * Generates an image using Flow2API (Nano Banana / Imagen models).
  */
@@ -272,7 +307,7 @@ export async function generateImage(opts: GenerateImageOptions): Promise<{ media
     for (const ref of opts.referenceImages.slice(0, 3)) {
       contentItems.push({
         type: 'image_url',
-        image_url: { url: `data:image/png;base64,${ref.toString('base64')}` }
+        image_url: { url: imageDataUrl(ref) }
       })
     }
   }
@@ -321,7 +356,7 @@ export async function generateVideo(opts: GenerateVideoOptions): Promise<{ media
     { type: 'text', text: cleanPrompt }
   ]
   if (opts.initialImage) {
-    content.push({ type: 'image_url', image_url: { url: `data:image/png;base64,${opts.initialImage.toString('base64')}` } })
+    content.push({ type: 'image_url', image_url: { url: imageDataUrl(opts.initialImage) } })
   }
 
   const body = {

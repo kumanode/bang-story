@@ -660,6 +660,26 @@ function VisualSection({
           </>
         )}
       </Card>
+      <div className="grid gap-3 rounded-2xl border border-line bg-surface p-5 sm:grid-cols-2">
+        <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+          Pekerjaan Higgsfield bersamaan (1–4)
+          <input className={inputCls} type="number" min={1} max={4} step={1} value={settings.higgsfieldConcurrency}
+            onChange={(event) => {
+              const value = Number(event.target.value)
+              if (Number.isInteger(value) && value >= 1 && value <= 4) void window.api.settings.set({ higgsfieldConcurrency: value }).then(onSettings)
+            }} />
+          <span className="font-normal text-muted">Jumlah gambar/video aktif sekaligus. Batas awal konservatif; kapasitas tergantung akun dan model.</span>
+        </label>
+        <label className="flex flex-col gap-1.5 text-[13px] font-medium">
+          Pekerjaan Flow2API bersamaan (1–3)
+          <input className={inputCls} type="number" min={1} max={3} step={1} value={settings.flow2apiConcurrency}
+            onChange={(event) => {
+              const value = Number(event.target.value)
+              if (Number.isInteger(value) && value >= 1 && value <= 3) void window.api.settings.set({ flow2apiConcurrency: value }).then(onSettings)
+            }} />
+          <span className="font-normal text-muted">Jumlah gambar/video aktif sekaligus. Server Flow2API yang kamu pakai bisa punya batas berbeda.</span>
+        </label>
+      </div>
     </>
   )
 }

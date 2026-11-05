@@ -2,6 +2,7 @@ import type { Job } from '@shared/types'
 import { emit } from './events'
 import { getJobRaw, updateJob } from './repo'
 import { cancelRequest } from './services/higgsfield'
+import { getSettings } from './settings'
 
 export type QueueName = 'higgsfield' | 'flow2api' | 'tts' | 'whisper' | 'export'
 
@@ -16,13 +17,14 @@ export interface TaskCtx {
 export type Task = (ctx: TaskCtx) => Promise<string | void | { message: string }>
 
 // Whisper uses most CPU cores by itself, so it runs one file at a time.
-const LIMITS: Record<QueueName, number> = { higgsfield: 3, flow2api: 2, tts: 2, whisper: 1, export: 1 }
+const FIXED_LIMITS: Record<Exclude<QueueName, 'higgsfield' | 'flow2api'>, number> = { tts: 2, whisper: 1, export: 1 }
 const running: Record<QueueName, number> = { higgsfield: 0, flow2api: 0, tts: 0, whisper: 0, export: 0 }
 const waiting: Record<QueueName, (() => void)[]> = { higgsfield: [], flow2api: [], tts: [], whisper: [], export: [] }
 const controllers = new Map<string, AbortController>()
 
 function acquire(q: QueueName): Promise<void> {
-  if (running[q] < LIMITS[q]) {
+  const limit = q === 'higgsfield' ? getSettings().higgsfieldConcurrency : q === 'flow2api' ? getSettings().flow2apiConcurrency : FIXED_LIMITS[q]
+  if (running[q] < limit) {
     running[q]++
     return Promise.resolve()
   }
@@ -36,11 +38,13 @@ function acquire(q: QueueName): Promise<void> {
 
 function release(q: QueueName): void {
   running[q]--
-  waiting[q].shift()?.()
+  const limit = q === 'higgsfield' ? getSettings().higgsfieldConcurrency : q === 'flow2api' ? getSettings().flow2apiConcurrency : FIXED_LIMITS[q]
+  if (running[q] < limit) waiting[q].shift()?.()
 }
 
 export function runJob(job: Job, queue: QueueName, task: Task): Job {
   const ctrl = new AbortController()
+  const queuedAt = Date.now()
   controllers.set(job.id, ctrl)
   let lastEmit = 0
   const ctx: TaskCtx = {
@@ -67,6 +71,7 @@ export function runJob(job: Job, queue: QueueName, task: Task): Job {
       return
     }
     try {
+      console.info('[job] queue wait completed', { kind: job.kind, provider: job.provider, elapsedMs: Date.now() - queuedAt })
       emit.job(updateJob(job.id, { status: 'running', progress: 0.02 }))
       const result = await task(ctx)
       const extra =

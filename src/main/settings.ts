@@ -18,8 +18,14 @@ export const DEFAULT_SETTINGS: AppSettings = {
   defaultVisualProvider: 'higgsfield',
   flow2apiBaseUrl: 'http://localhost:8000/v1',
   flow2apiImageModel: 'gemini-3.1-flash-image',
-  flow2apiVideoModel: 'veo-3.1-fast-i2v'
+  flow2apiVideoModel: 'veo-3.1-fast-i2v',
+  higgsfieldConcurrency: 3,
+  flow2apiConcurrency: 2,
+  imageGenerationMode: 'final'
 }
+
+const clampConcurrency = (value: unknown, max: number, fallback: number): number =>
+  typeof value === 'number' && Number.isFinite(value) ? Math.max(1, Math.min(max, Math.floor(value))) : fallback
 
 export function getSettings(): AppSettings {
   const rows = getDb().prepare('SELECT key, value FROM settings').all() as { key: string; value: string }[]
@@ -35,6 +41,9 @@ export function getSettings(): AppSettings {
   // Models dropped from the Higgsfield catalog fall back to the defaults.
   out.imageModel = getImageModel(out.imageModel).id
   out.videoModel = getVideoModel(out.videoModel).id
+  out.higgsfieldConcurrency = clampConcurrency(out.higgsfieldConcurrency, 4, DEFAULT_SETTINGS.higgsfieldConcurrency)
+  out.flow2apiConcurrency = clampConcurrency(out.flow2apiConcurrency, 3, DEFAULT_SETTINGS.flow2apiConcurrency)
+  if (out.imageGenerationMode !== 'draft' && out.imageGenerationMode !== 'final') out.imageGenerationMode = 'final'
   if (out.defaultVisualProvider !== 'higgsfield' && out.defaultVisualProvider !== 'flow2api') {
     out.defaultVisualProvider = 'higgsfield'
   }
@@ -52,7 +61,10 @@ export function setSettings(patch: Partial<AppSettings>): AppSettings {
   getDb().transaction(() => {
     for (const [k, v] of Object.entries(patch)) {
       if (!(k in DEFAULT_SETTINGS)) continue
-      const value = k === 'llmModels' ? { ...current.llmModels, ...(v as object) } : v
+      let value: unknown = k === 'llmModels' ? { ...current.llmModels, ...(v as object) } : v
+      if (k === 'higgsfieldConcurrency') value = clampConcurrency(v, 4, current.higgsfieldConcurrency)
+      if (k === 'flow2apiConcurrency') value = clampConcurrency(v, 3, current.flow2apiConcurrency)
+      if (k === 'imageGenerationMode' && v !== 'draft' && v !== 'final') value = current.imageGenerationMode
       stmt.run(k, JSON.stringify(value))
     }
   })()

@@ -355,7 +355,7 @@ function draftSystem(brief: StoryBrief, lang: string): string {
     factRule(brief),
     'Deliver every beat with specific content such as names, traits, events, and sensory detail instead of talking about the topic from outside.',
     'Never repeat a point that was already made, and skip filler transitions such as "let us continue".',
-    'Use short to medium sentences, each one clear thought that could be illustrated, because the text is later cut into short scenes at sentence breaks.',
+    'Shape narration around the listed beats in order. Give each sentence one clear story moment that could be illustrated; keep complete sentences intact because scenes are grouped at sentence boundaries.',
     VOICE_TAG_RULE,
     `Write in ${lang}, except vocal tags, which stay in English.`
   ].join(' ')
@@ -379,7 +379,7 @@ async function draftActs(project: Project, plan: StoryPlan, brief: StoryBrief, p
   const system = draftSystem(brief, lang)
   const context = planContext(project, plan, brief)
   const count = plan.acts.reduce((n, a) => n + a.scenes, 0)
-  const hookRule = 'The first words of act 1 are the exact chosen hook.'
+  const hookRule = 'Begin act 1 with the exact chosen hook as its opening sentence. Continue with the concrete consequence that makes the viewer want the answer; do not restate the hook or its idea.'
   if (count <= 60 && pending.drafts.size < plan.acts.length) {
     emit.storyProgress({ projectId: project.id, message: 'Menulis narasi utuh…' })
     const lengths = plan.acts.map((a, i) => `Act ${i + 1}: about ${actTarget(a, wordsPerScene)} spoken words`).join('\n')
@@ -416,7 +416,9 @@ async function draftActs(project: Project, plan: StoryPlan, brief: StoryBrief, p
     pending.drafts.set(i, narration)
   }
   const drafts = plan.acts.map((_, i) => pending.drafts.get(i) ?? '')
-  if (!drafts[0].toLocaleLowerCase().startsWith(plan.hook.toLocaleLowerCase())) drafts[0] = `${plan.hook} ${drafts[0]}`.trim()
+  if (!drafts[0].trimStart().toLocaleLowerCase().startsWith(plan.hook.trim().toLocaleLowerCase())) {
+    throw new Error('Pembuka belum memakai hook terpilih secara utuh. Coba buat naskah lagi agar hook menyatu dengan cerita.')
+  }
   return drafts
 }
 
@@ -490,6 +492,7 @@ async function reviewScript(project: Project, plan: StoryPlan, brief: StoryBrief
     system: [
       'You are a story editor checking a finished faceless YouTube script against its brief.',
       'Flag only real problems: a must-cover point that is missing or only mentioned vaguely, a scene that repeats an earlier scene, a scene that drifts away from the brief or into an avoided direction, or a scene that talks about the topic from outside instead of delivering content.',
+      'Also check for stiff spoken Indonesian, an opening that repeats the hook idea, a weak cause-and-effect transition between adjacent scenes, a hook with no later payoff, and scenes that do not deliver the reviewed outline beats.',
       factRule(brief),
       'For a missing point, choose the weakest or most repetitive scene where it fits and instruct the rewrite to deliver it there.',
       `Return at most ${MAX_REVIEW_FIXES} issues, most important first, and an empty list when the script is fine. Write problems and instructions in English.`

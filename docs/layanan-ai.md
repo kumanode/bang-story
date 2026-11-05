@@ -43,6 +43,28 @@ Pengguna memasukkan kuncinya sendiri di **Pengaturan › Layanan AI dan kunci**.
 
 Narasi selalu dibuat satu rekaman utuh lalu dipotong. Lihat [alur-produksi.md](alur-produksi.md#4-narasi-srcmainnarrationts).
 
+## Flow2API
+
+- Batas pekerjaan gambar/video dapat diatur di Pengaturan: 1–3 bersamaan (bawaan 2). Nilai ini hanya membatasi pekerjaan
+  dari aplikasi; server Flow2API dan akun Google yang dipakainya menentukan kapasitas sesungguhnya. Antrean TTS, Whisper,
+  dan ekspor tidak memakai pengaturan ini.
+- Progress menampilkan fase dan waktu berjalan. Flow2API tidak mengirim persentase kemajuan yang dapat dipercaya.
+- Retry otomatis dibatasi pada penolakan HTTP 429/503 sebelum streaming dimulai, menghormati `Retry-After`, memakai
+  jitter, dan bisa dihentikan. Koneksi yang putus setelah stream dimulai tidak dikirim ulang karena server mungkin sudah
+  membuat hasil. Pesan job menjelaskan bahwa hasil belum diketahui; pengguna dapat memeriksa server lalu mencoba manual.
+- Referensi gambar dibungkus sebagai data URI sesuai signature byte PNG/JPEG/WebP. Format lain ditolak dengan petunjuk
+  format yang dapat dipakai. Berkas sumber tidak diubah.
+- Log diagnosis mencatat durasi antre aplikasi, stream, dan unduhan serta ukuran byte; log tidak mencatat prompt, kunci,
+  Base64, atau isi gambar. Belum ada baseline waktu/mutu provider yang dapat dibandingkan karena itu perlu diuji dengan
+  server, akun, model, dan adegan uji yang sama. Jangan menaikkan concurrency berdasarkan batas dari instalasi lain.
+
+Untuk mengukur baseline dan perbandingan, gunakan proyek uji nonproduksi yang sama dan catat per provider/model:
+
+| Percobaan | Provider/model | Resolusi | Antre aplikasi | Remote/generasi | Unduh | Referensi (jumlah/byte) | Retry/429/503 | Mutu visual | Versi server/akun |
+|---|---|---:|---:|---:|---:|---:|---|---|---|
+| Sebelum | Isi saat pengukuran | — | — | — | — | — | — | — | — |
+| Sesudah | Isi saat pengukuran | — | — | — | — | — | — | — | — |
+
 ### Kemasan YouTube (`youtubeMetadata`)
 
 Prompt di `story.ts` mengirim judul proyek, sinopsis, sampai 40 adegan pertama (judul dan ringkasan maksimal 120 karakter), durasi, dan bab yang disusun oleh `shared/chapters.ts`. Adegan pendek digabung sampai tiap bab berdurasi minimal 10 detik. Jika hasilnya kurang dari tiga bab, editor menampilkan peringatan karena YouTube membutuhkan minimal tiga timestamp.
@@ -57,6 +79,11 @@ Prompt di `story.ts` mengirim judul proyek, sinopsis, sampai 40 adegan pertama (
   biaya per model selalu diambil dari sini.
 - Pesan error dibuat ramah (`friendly`): kunci salah, kredit habis, terlalu banyak proses, model tidak tersedia.
 - Untuk pengembangan, `STUDIO_HF_BASE` bisa diarahkan ke server tiruan (mock) supaya UI bisa diuji tanpa kredit.
+- Batas pekerjaan gambar/video bisa diatur di Pengaturan: 1–4 bersamaan (bawaan 3). Angka ini hanya batas antrean aplikasi;
+  kapasitas nyata bergantung pada akun, model, dan antrean Higgsfield. Mode gambar Draft memilih resolusi terendah yang
+  ditawarkan model; Final memakai resolusi bawaan penuh. Resolusi yang benar-benar dikirim disimpan di metadata aset.
+- Log diagnosis hanya mencatat provider/model dan durasi submit, antre aplikasi, proses remote, serta unduhan/ukuran file.
+  Log tidak mencatat prompt, kunci, atau isi gambar.
 
 ### Katalog model (`src/shared/higgsfield-catalog.json`)
 

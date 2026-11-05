@@ -178,6 +178,17 @@ export function ModelSection({
             menuClassName="w-[430px]"
             onChange={(id) => onChange({ imageModel: id })}
           />
+          <div className="flex items-center gap-2.5">
+            <span className="shrink-0 text-[12.5px] font-medium text-ink-2">Mode gambar</span>
+            <Segmented
+              size="sm"
+              value={appSettings?.imageGenerationMode ?? 'final'}
+              onChange={async (mode) => setAppSettings(await window.api.settings.set({ imageGenerationMode: mode as 'draft' | 'final' }))}
+              options={[{ id: 'draft', label: 'Draft' }, { id: 'final', label: 'Final' }]}
+              className="min-w-0 flex-1"
+            />
+          </div>
+          <p className="text-[12.5px] leading-snug text-muted">Draft memakai resolusi terendah yang didukung model; Final memakai resolusi penuh bawaan model.</p>
           <p className="text-[12.5px] leading-snug text-ink-2">
             <Cost value={imageCost} hasKey={hasKey}>
               {(c) => (

@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { RefreshCw, Sparkles, Trash2, UserPlus } from 'lucide-react'
 import type { VoiceOption } from '@shared/types'
 import { Select } from '../../components/Select'
-import { Button, Field, Modal, Progress, confirmDialog, cx, inputCls } from '../../components/ui'
+import { Button, Field, Modal, Spinner, confirmDialog, cx, inputCls } from '../../components/ui'
 import { errorText } from '../../lib/format'
 import { useApp } from '../../store/app'
 import { isRunning, jobFor, useProject } from '../../store/project'
@@ -166,9 +166,9 @@ function EditCharacter({ characterId, onClose }: { characterId: string | null; o
             )}
           >
             <span className="text-sm font-semibold text-sun-ink">
-              {job!.message ?? 'Memproses'}… {Math.round(job!.progress * 100)}%
+              {job!.message ?? 'Memproses'}
             </span>
-            <Progress value={job!.progress} className="w-1/2" />
+            <Spinner className="size-5 text-accent" />
           </div>
         )}
       </div>

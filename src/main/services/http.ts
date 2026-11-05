@@ -17,7 +17,8 @@ export class ApiError extends Error {
   constructor(
     message: string,
     public status: number,
-    public retryable = false
+    public retryable = false,
+    public retryAfterMs?: number
   ) {
     super(message)
   }

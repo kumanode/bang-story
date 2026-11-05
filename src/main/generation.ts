@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { estimateWordTimings } from '@shared/captions'
 import { stripVoiceTags } from '@shared/speech'
-import { getImageModel, getVideoModel, imageBody, maxRefs, promptLimit, videoBody, type HfModel } from '@shared/higgsfield'
+import { getImageModel, getVideoModel, imageBody, maxRefs, promptLimit, resolutionOptions, videoBody, type HfModel } from '@shared/higgsfield'
 import { getStyle, NO_TEXT } from '@shared/styles'
 import type { AspectRatio, Asset, Character, Clip, CreditEstimate, Job, Project, ThumbnailRequest, WordTiming } from '@shared/types'
 import { getDb } from './db'
@@ -70,7 +70,7 @@ async function publicUrlFor(asset: Asset, signal: AbortSignal): Promise<string> 
 function imageProgress(ctx: TaskCtx, what: string) {
   return (status: hf.HfStatus, elapsed: number): void => {
     if (status === 'queued') ctx.progress(0.12, 'Mengantre di Higgsfield')
-    else ctx.progress(0.15 + 0.75 * (1 - Math.exp(-elapsed / 45_000)), what)
+    else ctx.progress(0.12, `${what} · ${Math.floor(elapsed / 1000)} dtk`)
   }
 }
 
@@ -168,6 +168,7 @@ interface HfPayload {
   target: 'clip-image' | 'sheet' | 'clip-video' | 'thumbnail'
   model: string
   prompt: string
+  resolution?: string
 }
 
 async function finishHiggsfield(ctx: TaskCtx, job: Job, requestId: string, payload: HfPayload): Promise<string> {
@@ -181,11 +182,15 @@ async function finishHiggsfield(ctx: TaskCtx, job: Job, requestId: string, paylo
   const url = isVideo ? result.video?.url : result.images?.[0]?.url
   if (!url) throw new Error('Higgsfield selesai tanpa file hasil')
   ctx.progress(0.93, 'Mengunduh hasil')
+  const downloadStartedAt = Date.now()
   const { bytes, contentType } = await downloadTo(url, ctx.signal)
+  if (ctx.signal.aborted) throw new Error('Dibatalkan')
+  console.info('[higgsfield] download completed', { elapsedMs: Date.now() - downloadStartedAt, bytes: bytes.length })
   const rel = saveFile(job.projectId, isVideo ? 'videos' : 'images', extFromType(contentType, url, isVideo ? '.mp4' : '.png'), bytes)
   const abs = assetAbsPath(job.projectId, rel)
   const size = await probeSize(abs)
   const durationMs = isVideo ? await probeDurationMs(abs).catch(() => null) : null
+  if (ctx.signal.aborted) throw new Error('Dibatalkan')
   const asset = insertAsset({
     projectId: job.projectId,
     clipId: job.clipId,
@@ -201,7 +206,7 @@ async function finishHiggsfield(ctx: TaskCtx, job: Job, requestId: string, paylo
     width: size?.width ?? null,
     height: size?.height ?? null,
     // Thumbnails have no clip; the flag is how the export dialog finds them again.
-    meta: payload.target === 'thumbnail' ? { thumbnail: true } : undefined
+    meta: { ...(payload.target === 'thumbnail' ? { thumbnail: true } : {}), ...(payload.resolution ? { resolution: payload.resolution } : {}) }
   })
   emit.asset(asset)
   if (payload.target === 'sheet' && job.characterId) {
@@ -227,8 +232,11 @@ function startHiggsfield(job: Job, build: (ctx: TaskCtx) => Promise<{ endpoint: 
   return runJob(job, 'higgsfield', async (ctx) => {
     ctx.progress(0.04, 'Menyiapkan prompt')
     const { endpoint, body, payload } = await build(ctx)
+    if (typeof body.resolution === 'string' || typeof body.resolution === 'number') payload.resolution = String(body.resolution)
     ctx.progress(0.08, 'Mengirim ke Higgsfield')
+    const submitStartedAt = Date.now()
     const requestId = await hf.submit(endpoint, body, ctx.signal)
+    console.info('[higgsfield] submit accepted', { model: payload.model, elapsedMs: Date.now() - submitStartedAt })
     ctx.setRemote(requestId)
     updateJobPayload(job.id, payload)
     return finishHiggsfield(ctx, job, requestId, payload)
@@ -282,10 +290,14 @@ export function generateClipImage(clipId: string): Job {
       })
 
       ctx.progress(0.93, 'Mengunduh hasil')
+      const downloadStartedAt = Date.now()
       const { bytes, contentType } = await downloadTo(mediaUrl, ctx.signal)
+      if (ctx.signal.aborted) throw new Error('Dibatalkan')
+      console.info('[flow2api] download completed', { elapsedMs: Date.now() - downloadStartedAt, bytes: bytes.length })
       const rel = saveFile(project.id, 'images', extFromType(contentType, mediaUrl, '.png'), bytes)
       const abs = assetAbsPath(project.id, rel)
       const size = await probeSize(abs)
+      if (ctx.signal.aborted) throw new Error('Dibatalkan')
       const asset = insertAsset({
         projectId: project.id,
         clipId: fresh.id,
@@ -318,7 +330,7 @@ export function generateClipImage(clipId: string): Job {
     const prompt = clipPrompt(project, fresh, chars, refs.names, promptLimit(model))
     return {
       endpoint: model.id,
-      body: imageBody(model, prompt, project.aspectRatio, refs.urls),
+      body: imageBody(model, prompt, project.aspectRatio, refs.urls, getSettings().imageGenerationMode === 'draft' ? resolutionOptions(model)[0] : undefined),
       payload: { target: 'clip-image', model: model.id, prompt }
     }
   })
@@ -384,9 +396,13 @@ export function generateThumbnail(projectId: string, req: ThumbnailRequest): Job
       const baseModel = (project.imageModel && !project.imageModel.includes('/') ? project.imageModel : null) ?? getSettings().flow2apiImageModel
       const modelId = resolveFlow2ApiModelId(baseModel, '16:9')
       const { mediaUrl } = await f2a.generateImage({ prompt: variedPrompt, model: modelId, referenceImages: refBuffers, signal: ctx.signal, onProgress: (progress, message) => ctx.progress(progress, message) })
+      const downloadStartedAt = Date.now()
       const { bytes, contentType } = await downloadTo(mediaUrl, ctx.signal)
+      if (ctx.signal.aborted) throw new Error('Dibatalkan')
+      console.info('[flow2api] thumbnail download completed', { elapsedMs: Date.now() - downloadStartedAt, bytes: bytes.length })
       const rel = saveFile(projectId, 'images', extFromType(contentType, mediaUrl, '.png'), bytes)
       const size = await probeSize(assetAbsPath(projectId, rel))
+      if (ctx.signal.aborted) throw new Error('Dibatalkan')
       const asset = insertAsset({ projectId, kind: 'image', provider: 'flow2api', model: modelId, prompt: variedPrompt, remoteUrl: mediaUrl, localPath: rel, width: size?.width ?? null, height: size?.height ?? null, meta: { thumbnail: true } })
       emit.asset(asset)
       return asset.id
@@ -427,10 +443,14 @@ export function generateCharacterSheet(characterId: string): Job {
       })
 
       ctx.progress(0.93, 'Mengunduh lembar karakter')
+      const downloadStartedAt = Date.now()
       const { bytes, contentType } = await downloadTo(mediaUrl, ctx.signal)
+      if (ctx.signal.aborted) throw new Error('Dibatalkan')
+      console.info('[flow2api] character sheet download completed', { elapsedMs: Date.now() - downloadStartedAt, bytes: bytes.length })
       const rel = saveFile(project.id, 'images', extFromType(contentType, mediaUrl, '.png'), bytes)
       const abs = assetAbsPath(project.id, rel)
       const size = await probeSize(abs)
+      if (ctx.signal.aborted) throw new Error('Dibatalkan')
       const asset = insertAsset({
         projectId: project.id,
         characterId,
@@ -503,11 +523,15 @@ export function generateClipVideo(clipId: string): Job {
       })
 
       ctx.progress(0.93, 'Mengunduh video hasil')
+      const downloadStartedAt = Date.now()
       const { bytes, contentType } = await downloadTo(mediaUrl, ctx.signal)
+      if (ctx.signal.aborted) throw new Error('Dibatalkan')
+      console.info('[flow2api] video download completed', { elapsedMs: Date.now() - downloadStartedAt, bytes: bytes.length })
       const rel = saveFile(project.id, 'videos', extFromType(contentType, mediaUrl, '.mp4'), bytes)
       const abs = assetAbsPath(project.id, rel)
       const size = await probeSize(abs)
       const durationMs = await probeDurationMs(abs).catch(() => null)
+      if (ctx.signal.aborted) throw new Error('Dibatalkan')
       const asset = insertAsset({
         projectId: project.id,
         clipId: fresh.id,

@@ -413,6 +413,11 @@ export interface AppSettings {
   flow2apiImageModel: string
   /** Model dasar video di Flow2API (suffix aspect+durasi otomatis). */
   flow2apiVideoModel: string
+  /** Maximum active image/video jobs for each visual provider. */
+  higgsfieldConcurrency: number
+  flow2apiConcurrency: number
+  /** Draft selects the lowest resolution supported by a Higgsfield image model. */
+  imageGenerationMode: 'draft' | 'final'
 }
 
 /** What one Higgsfield request would cost, from the API's estimate endpoint. */

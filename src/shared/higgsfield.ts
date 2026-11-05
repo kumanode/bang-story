@@ -140,8 +140,8 @@ function checkRequired(m: HfModel, body: Record<string, unknown>): Record<string
   return body
 }
 
-export function imageBody(m: HfModel, prompt: string, aspect: AspectRatio, refs: string[]): Record<string, unknown> {
-  const body = common(m, prompt, aspect)
+export function imageBody(m: HfModel, prompt: string, aspect: AspectRatio, refs: string[], resolution?: string | null): Record<string, unknown> {
+  const body = common(m, prompt, aspect, resolution)
   const limit = maxRefs(m)
   if (limit > 0 && refs.length && m.input.field) body[m.input.field] = refs.slice(0, limit)
   return checkRequired(m, body)

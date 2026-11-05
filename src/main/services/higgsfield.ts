@@ -107,7 +107,10 @@ export async function waitForResult(
       continue
     }
     onTick(r.status, Date.now() - started)
-    if (r.status === 'completed') return r
+    if (r.status === 'completed') {
+      console.info('[higgsfield] remote generation completed', { elapsedMs: Date.now() - started })
+      return r
+    }
     if (r.status === 'failed') throw new Error(`Higgsfield gagal membuat hasil: ${r.error ?? 'tanpa keterangan'}`)
     if (r.status === 'nsfw') throw new Error('Ditolak moderasi Higgsfield. Ubah prompt lalu coba lagi.')
     if (r.status === 'canceled') throw new Error('Dibatalkan')

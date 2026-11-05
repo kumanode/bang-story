@@ -1,7 +1,7 @@
 import { AlertCircle, Image as ImageIcon } from 'lucide-react'
 import type { Asset, Clip, Job } from '@shared/types'
 import { isRunning } from '../store/project'
-import { Progress, cx } from './ui'
+import { Spinner, cx } from './ui'
 
 /** A clip's picture: its video (if chosen), image, or a placeholder, with the state of any running job on top. */
 export function ClipVisual({
@@ -48,9 +48,9 @@ export function ClipVisual({
           )}
         >
           <span className={cx('font-semibold text-sun-ink', large ? 'text-[15px]' : 'text-[13px]')}>
-            {job!.status === 'queued' ? 'Menunggu antrean…' : `${job!.message ?? 'Memproses'}… ${Math.round(job!.progress * 100)}%`}
+            {job!.status === 'queued' ? 'Menunggu antrean…' : job!.message ?? 'Memproses'}
           </span>
-          <Progress value={job!.progress} className="w-3/5" />
+          <Spinner className="size-5 text-accent" />
           {large && <span className="text-[13px] text-ink-2">Boleh pindah klip, prosesnya tetap jalan</span>}
         </div>
       )}

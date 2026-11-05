@@ -1,0 +1,21 @@
+# Daftar Tugas: Hook, Narasi, Flow2API, dan Higgsfield
+
+- [ ] Tugas 1 — Ambil baseline kualitas dan durasi untuk Flow2API serta Higgsfield.
+- [ ] Tugas 2 — Tambahkan pengaturan konkurensi terpisah untuk kedua provider.
+- [ ] Checkpoint 1 — Pastikan baseline dan setting aman serta tidak mengubah antrean TTS/Whisper/ekspor.
+- [ ] Tugas 3 — Kirim MIME yang benar untuk referensi gambar dan frame awal video.
+- [ ] Tugas 4 — Optimalkan ukuran referensi hanya jika pengukuran membuktikan manfaat tanpa menurunkan mutu.
+- [ ] Checkpoint 2 — Validasi referensi PNG/JPEG/WebP dan keputusan optimasi payload.
+- [ ] Tugas 5 — Batasi retry Flow2API pada kegagalan yang aman; hindari generate duplikat.
+- [ ] Tugas 6 — Tampilkan progres berdasarkan fase dan ukur durasi tanpa membocorkan data sensitif.
+- [ ] Checkpoint 3 — Pastikan retry, pembatalan, progres, dan privasi log berfungsi.
+- [ ] Tugas 7 — Bandingkan hasil Flow2API dan dokumentasikan limit yang terukur.
+- [ ] Tugas 8 — Satukan hook dengan pembukaan tanpa duplikasi; pertahankan pilihan manual/otomatis.
+- [ ] Tugas 9 — Susun adegan berdasarkan beat dan hindari pemotongan kalimat yang menggantung.
+- [ ] Tugas 10 — Perkuat review naskah dan revisi bagian tertentu tanpa mengubah bagian lain.
+- [ ] Checkpoint 4 — Tinjau naturalitas naskah, transisi adegan, TTS, dan caption.
+- [ ] Tugas 11 — Optimalkan concurrency/polling/referensi Higgsfield berdasarkan baseline.
+- [ ] Tugas 12 — Evaluasi pilihan Draft/Final untuk resolusi gambar Higgsfield.
+- [ ] Tugas 13 — Tambahkan tombol Batalkan di samping Buat video saat job video aktif.
+- [ ] Tugas 14 — Verifikasi end-to-end kedua provider dan alur cerita; dokumentasikan hasil.
+- [ ] Checkpoint akhir — Semua kriteria di `tasks/plan.md` terpenuhi dan perubahan siap ditinjau.

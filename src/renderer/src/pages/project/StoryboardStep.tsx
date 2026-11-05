@@ -16,7 +16,8 @@ import {
   RefreshCw,
   Sparkles,
   Trash2,
-  Volume2
+  Volume2,
+  X
 } from 'lucide-react'
 import { FLOW2API_IMAGE_MODELS, FLOW2API_VIDEO_MODELS, getFlow2ApiModel } from '@shared/flow2api-catalog'
 import { effectiveResolution, fitDuration, getImageModel, getVideoModel } from '@shared/higgsfield'
@@ -443,12 +444,18 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
                 >
                   {video ? 'Buat ulang video' : 'Buat video'}
                 </Button>
+                {isRunning(videoJob) && (
+                  <Button size="sm" variant="secondary" icon={<X className="size-3.5" />} onClick={() => void run(() => window.api.generate.cancel(videoJob!.id))}>
+                    Batalkan
+                  </Button>
+                )}
                 {!image && <span className="text-xs text-muted">Buat gambar dulu, lalu jadikan video.</span>}
                 {isRunning(videoJob) && (
                   <span className="text-xs text-sun-ink">
-                    {videoJob!.message ?? 'Memproses'} {Math.round(videoJob!.progress * 100)}%
+                    {videoJob!.message ?? 'Memproses'}
                   </span>
                 )}
+                {videoJob?.status === 'canceled' && <span className="text-xs text-muted">Dibatalkan · kamu bisa mencoba lagi.</span>}
                 {videoJob?.status === 'failed' && <span className="truncate text-xs text-bad-ink">{videoJob.error}</span>}
               </div>
             </div>

@@ -170,15 +170,21 @@ function ClipTab({ clip, index }: { clip: Clip; index: number }) {
             >
               {video ? 'Buat ulang video' : 'Buat video'}
             </Button>
+            {isRunning(videoJob) && (
+              <Button size="sm" variant="secondary" icon={<X className="size-3.5" />} onClick={() => void run(() => window.api.generate.cancel(videoJob!.id))}>
+                Batalkan
+              </Button>
+            )}
             <Button size="sm" icon={<Move className="size-4" />} onClick={() => updateClip(clip.id, { motionType: 'camera' })}>
               Kembali ke gerak kamera
             </Button>
           </div>
           {isRunning(videoJob) && (
             <span className="text-xs text-sun-ink">
-              {videoJob!.message ?? 'Memproses'} {Math.round(videoJob!.progress * 100)}%
+              {videoJob!.message ?? 'Memproses'}
             </span>
           )}
+          {videoJob?.status === 'canceled' && <span className="text-xs text-muted">Dibatalkan · kamu bisa mencoba lagi.</span>}
           <div className="mt-1 flex flex-col gap-2">
             <span className="text-[13px] font-medium text-ink-2">Gerak kamera di atas video</span>
             <div className="grid grid-cols-[minmax(0,1fr)_120px] gap-2">

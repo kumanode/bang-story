@@ -154,3 +154,13 @@ aksi paksa meminta konfirmasi dan menghapus penanda edit manual sebelum menulis 
 Hook adalah janji cerita, bukan kalimat promosi yang berdiri sendiri. Kreator memilih atau menulis hook terlebih
 dahulu, meninjau kerangka babak yang menjawabnya, lalu naskah dibuat dari kerangka itu. Revisi adegan membawa hook
 dan konteks tetangganya agar perubahan lokal tetap cocok dengan alur utama.
+
+### Adegan mengikuti kalimat utuh
+Jumlah adegan dalam outline adalah sasaran tempo. Narasi satu rekaman dipotong pada batas kalimat dan kalimat panjang
+tetap utuh; bila batas alami tidak cocok dengan target, jumlah adegan boleh berbeda. Jangan membelah kalimat secara
+otomatis karena potongan itu dapat merusak intonasi dan membuat naskah terputus saat dibacakan.
+
+### Retry Flow2API berhenti saat hasil ambigu
+Penolakan HTTP 429/503 sebelum stream adalah satu-satunya kondisi generasi yang dicoba ulang otomatis. Setelah stream
+dimulai, koneksi yang putus bisa berarti server sudah menerima dan membuat hasil; permintaan tidak boleh dikirim ulang
+diam-diam tanpa idempotensi atau pemeriksaan status yang didukung server.
