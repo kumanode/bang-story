@@ -190,6 +190,22 @@ export interface StoryAct {
   title: string
   summary: string
   scenes: number
+  /** Brief points this act is responsible for; optional because plans saved before briefs have none. */
+  beats?: string[]
+}
+
+export type StoryFormat = 'story' | 'list' | 'explainer' | 'documentary' | 'factcheck'
+/** How strictly the writer treats truth: real facts, told belief (folklore, legends, horror), or invented fiction. */
+export type StoryFactMode = 'factual' | 'folklore' | 'fiction'
+
+/** What the creator actually wants delivered, read from the idea before any hook or outline is written. */
+export interface StoryBrief {
+  format: StoryFormat
+  factMode: StoryFactMode
+  tone: string
+  angle: string
+  mustCover: string[]
+  avoid: string[]
 }
 
 export interface StoryPlan {
@@ -198,6 +214,8 @@ export interface StoryPlan {
   hook: string
   title: string
   acts: StoryAct[]
+  /** Optional so plans saved before briefs existed still load; the script step creates one when missing. */
+  brief?: StoryBrief
 }
 
 export interface Character {

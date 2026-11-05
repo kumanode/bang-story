@@ -51,7 +51,7 @@ import {
   updateAssetMeta
 } from './repo'
 import { BUILTIN_SFX } from '@shared/sfx'
-import type { Clip } from '@shared/types'
+import type { Clip, StoryBrief } from '@shared/types'
 import { clearSecret, keyStatuses, recordCheck, revealSecret, setSecret } from './secrets'
 import { dropCache, getSettings, setSettings } from './settings'
 import { probeDurationMs, probeSize, probeVideoCodec, toYoutubeThumbnail } from './services/audio'
@@ -60,7 +60,7 @@ import * as gemini from './services/gemini'
 import * as f2a from './services/flow2api'
 import * as hf from './services/higgsfield'
 import * as llm from './services/llm'
-import { generateHooks, generateOutline, generateScript, generateVisuals, generateMusicPrompt, generateThumbnailConcept, generateYoutubeMetadata, reviseScene } from './story'
+import { generateBrief, generateHooks, generateOutline, generateScript, generateVisuals, generateMusicPrompt, generateThumbnailConcept, generateYoutubeMetadata, reviseScene } from './story'
 
 
 type Handler = (...args: any[]) => unknown
@@ -99,8 +99,9 @@ export function registerIpc(): void {
   })
   handle('projects:duplicate', (id: string) => duplicateProject(id))
 
-  handle('story:hooks', (projectId: string) => generateHooks(projectId))
-  handle('story:outline', (projectId: string, hook: string) => generateOutline(projectId, String(hook ?? '')))
+  handle('story:brief', (projectId: string) => generateBrief(projectId))
+  handle('story:hooks', (projectId: string, brief?: StoryBrief) => generateHooks(projectId, brief ?? undefined))
+  handle('story:outline', (projectId: string, hook: string, brief?: StoryBrief) => generateOutline(projectId, String(hook ?? ''), brief ?? undefined))
   handle('story:script', (projectId: string) => generateScript(projectId))
   handle('story:reviseScene', (projectId: string, clipId: string, instruction: string) => reviseScene(projectId, clipId, String(instruction ?? '')))
   handle('story:musicPrompt', (projectId: string) => generateMusicPrompt(projectId))

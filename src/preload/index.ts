@@ -24,6 +24,7 @@ const api: StudioApi = {
     duplicate: call('projects:duplicate')
   },
   story: {
+    brief: call('story:brief'),
     hooks: call('story:hooks'),
     outline: call('story:outline'),
     script: call('story:script'),

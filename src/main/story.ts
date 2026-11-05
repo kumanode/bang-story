@@ -1,10 +1,26 @@
 import { CAMERA_PRESETS, MOTION_STRENGTHS, TRANSITIONS } from '@shared/motion'
 import { formatChapters } from '@shared/chapters'
 import { LANGUAGES, clipCountFor } from '@shared/models'
-import { estimateNarrationMs, needsVisual } from '@shared/script'
+import { estimateNarrationMs, needsVisual, wordCount } from '@shared/script'
 import { getStyle } from '@shared/styles'
-import type { CameraPresetId, Clip, MotionStrength, MusicPrompt, ProjectBundle, StoryAct, StoryPlan, ThumbnailConcept, TransitionId, YoutubeMetadata } from '@shared/types'
-import { applyVisuals, charactersOf, clipsOf, getBundle, getProject, replaceScript, type SceneVisual } from './repo'
+import type {
+  CameraPresetId,
+  Clip,
+  MotionStrength,
+  MusicPrompt,
+  Project,
+  ProjectBundle,
+  StoryAct,
+  StoryBrief,
+  StoryFactMode,
+  StoryFormat,
+  StoryPlan,
+  ThumbnailConcept,
+  TransitionId,
+  YoutubeMetadata
+} from '@shared/types'
+import { applyVisuals, charactersOf, clipsOf, getBundle, getProject, replaceScript, setStoryPlan, type SceneVisual } from './repo'
+import { splitNarration } from './narrationSplit'
 import { generateJson } from './services/llm'
 import { emit } from './events'
 
@@ -13,61 +29,99 @@ const STRENGTH_IDS = MOTION_STRENGTHS.map((m) => m.id)
 const TRANSITION_IDS = TRANSITIONS.map((t) => t.id)
 
 const str = (v: unknown): string => (typeof v === 'string' ? v.trim() : '')
+const strList = (v: unknown, max: number): string[] => (Array.isArray(v) ? v.map(str).filter(Boolean).slice(0, max) : [])
 
 function languageOf(code: string): string {
   return LANGUAGES.find((l) => l.code === code)?.english ?? 'Indonesian'
 }
 
-// ---------- step 1 → 2: the script ----------
+// ---------- step 1: brief, hook and outline ----------
 
-/** JSON Schema written to satisfy OpenAI strict mode (every property required, no extra keys) and Gemini. */
-const SCRIPT_SCHEMA = {
+const FORMATS: StoryFormat[] = ['story', 'list', 'explainer', 'documentary', 'factcheck']
+const FACT_MODES: StoryFactMode[] = ['factual', 'folklore', 'fiction']
+
+const FORMAT_GUIDE: Record<StoryFormat, string> = {
+  story: 'A narrative: characters with a goal, rising tension, and a payoff. Show events as they happen instead of summarizing them from outside.',
+  list: 'A catalogue of items. Each item gets its own stretch: name it clearly, give its distinguishing traits, the story or origin told about it, and one memorable detail. Keep the intro and outro short.',
+  explainer: 'Pose the question, explain the mechanism step by step with concrete examples, and end with a clear takeaway.',
+  documentary: 'Real events in order: people, places, decisions, and their consequences.',
+  factcheck: 'Present the claim fairly, weigh the evidence for and against it, and deliver a clear verdict.'
+}
+
+const FACT_RULE: Record<StoryFactMode, string> = {
+  factual: 'This topic is real-world fact. Keep facts accurate and do not invent dates, numbers, names, or quotes. If something is uncertain, say so once, briefly, and move on.',
+  folklore:
+    'This topic is folklore, legend, myth, or horror lore. Frame it once, near the start, as what people tell or believe. After that, tell each version vividly and with conviction, the way a storyteller would. Do not debunk it, do not keep repeating that it is unproven, and do not turn it into a debate about whether it is real.',
+  fiction: 'This is fiction. Commit fully to the story world, with no disclaimers.'
+}
+
+// A fact-check is the one format where weighing truth is the point, whatever the topic.
+const factRule = (brief: StoryBrief): string => FACT_RULE[brief.format === 'factcheck' ? 'factual' : brief.factMode]
+
+function briefText(brief: StoryBrief): string {
+  return [
+    `Format: ${brief.format}. ${FORMAT_GUIDE[brief.format]}`,
+    `Truth mode: ${factRule(brief)}`,
+    brief.tone && `Tone: ${brief.tone}`,
+    brief.angle && `Angle: ${brief.angle}`,
+    brief.mustCover.length && `Must cover (the viewer expects all of these):\n${brief.mustCover.map((p) => `- ${p}`).join('\n')}`,
+    brief.avoid.length && `Avoid (off-topic for the creator):\n${brief.avoid.map((p) => `- ${p}`).join('\n')}`
+  ].filter(Boolean).join('\n')
+}
+
+const BRIEF_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    title: { type: 'string', description: 'Short catchy video title in the target language, max 60 characters.' },
-    scenes: {
-      type: 'array',
-      items: {
-        type: 'object',
-        additionalProperties: false,
-        properties: {
-          title: { type: 'string', description: 'Short scene title in the target language.' },
-          story: {
-            type: 'string',
-            description: 'What happens in this scene, one or two sentences in the target language, so the writer can check the plot.'
-          },
-          narration: {
-            type: 'string',
-            description:
-              'Natural voice-over for this scene in the target language, sized for its target duration. Keep the opening hook concise. May contain one or two English vocal tags in angle brackets.'
-          }
-        },
-        required: ['title', 'story', 'narration']
-      }
-    }
+    format: { type: 'string', enum: FORMATS },
+    factMode: { type: 'string', enum: FACT_MODES },
+    tone: { type: 'string', description: 'Mood and voice of the narration, a few words.' },
+    angle: { type: 'string', description: 'Point of view the narrator takes, one sentence.' },
+    mustCover: { type: 'array', items: { type: 'string' }, description: 'Concrete items the viewer must get: names, types, events, or steps.' },
+    avoid: { type: 'array', items: { type: 'string' }, description: 'Directions the creator would consider off-topic.' }
   },
-  required: ['title', 'scenes']
+  required: ['format', 'factMode', 'tone', 'angle', 'mustCover', 'avoid']
 }
 
-interface ScriptPlan {
-  title?: string
-  scenes?: { title?: string; story?: string; narration?: string }[]
+function normalizeBrief(raw: Partial<StoryBrief> | undefined): StoryBrief {
+  const format = FORMATS.includes(raw?.format as StoryFormat) ? (raw?.format as StoryFormat) : 'story'
+  const factMode = FACT_MODES.includes(raw?.factMode as StoryFactMode) ? (raw?.factMode as StoryFactMode) : 'factual'
+  return { format, factMode, tone: str(raw?.tone), angle: str(raw?.angle), mustCover: strList(raw?.mustCover, 12), avoid: strList(raw?.avoid, 6) }
 }
 
-interface ScriptOutline {
-  title?: string
-  acts?: { title?: string; summary?: string; scenes?: number }[]
+/** Reads what the creator wants delivered, so later steps cannot drift into a different video. */
+export async function generateBrief(projectId: string): Promise<StoryBrief> {
+  const project = getProject(projectId)
+  if (!project.synopsis.trim()) throw new Error('Tulis ide cerita atau sinopsis dulu.')
+  const lang = languageOf(project.language)
+  const count = clipCountFor(project.durationSec)
+  const system = [
+    'You are a development editor for faceless YouTube videos. Read the creator idea literally and work out the video they expect to watch.',
+    'Keep the premise exactly as given: if the idea asks for types, the video presents those types; if it tells a story, the video tells it.',
+    'Never reframe the idea into a fact-check or a debate unless the creator explicitly asks whether something is true.',
+    'Choose the format and truth mode that fit. Ghosts, urban legends, myths, and horror lore use the folklore truth mode.',
+    'mustCover lists concrete things the viewer must get, such as names, types, events, or steps. Never list meta topics such as "why versions differ" unless the idea asks for them.',
+    'For a list, include each item the idea implies, using the versions most commonly told.',
+    `Write tone, angle, mustCover, and avoid in ${lang}.`
+  ].join(' ')
+  const raw = await generateJson<Partial<StoryBrief>>({
+    system,
+    prompt: `Creator idea:\n${project.synopsis}\n\nTarget video length: about ${project.durationSec} seconds (${count} short scenes). List at most one must-cover point per three scenes.`,
+    schema: BRIEF_SCHEMA,
+    name: 'story-brief'
+  })
+  const brief = normalizeBrief(raw)
+  if (!brief.mustCover.length) throw new Error('AI belum bisa merumuskan arah cerita. Coba lagi atau perjelas idenya.')
+  return brief
 }
 
-const SCRIPT_OUTLINE_SCHEMA = {
-  type: 'object', additionalProperties: false,
-  properties: {
-    title: { type: 'string' },
-    acts: { type: 'array', items: { type: 'object', additionalProperties: false, properties: {
-      title: { type: 'string' }, summary: { type: 'string' }, scenes: { type: 'integer' }
-    }, required: ['title', 'summary', 'scenes'] } }
-  }, required: ['title', 'acts']
+/** Old plans have no brief; the script step creates one so every project is written the same way. */
+async function briefFor(project: Project): Promise<StoryBrief> {
+  const saved = project.storyPlan?.brief
+  if (saved) return normalizeBrief(saved)
+  const brief = await generateBrief(project.id)
+  if (project.storyPlan) setStoryPlan(project.id, { ...project.storyPlan, brief })
+  return brief
 }
 
 const HOOK_SCHEMA = {
@@ -77,23 +131,70 @@ const HOOK_SCHEMA = {
   required: ['hooks']
 }
 
-const REVISED_SCENE_SCHEMA = {
+interface HookOptions { hooks?: string[] }
+
+/** Offers several openings that all promise the video the brief describes. */
+export async function generateHooks(projectId: string, rawBrief?: StoryBrief): Promise<string[]> {
+  const project = getProject(projectId)
+  if (!project.synopsis.trim()) throw new Error('Tulis ide cerita atau sinopsis dulu.')
+  const brief = rawBrief ? normalizeBrief(rawBrief) : await briefFor(project)
+  const lang = languageOf(project.language)
+  const system = [
+    'You write opening hooks for faceless YouTube videos.',
+    'Write three distinct hooks, each one short spoken line that can be shown as a concrete opening image.',
+    brief.format === 'factcheck'
+      ? 'Each hook states the claim being checked and makes the viewer want the verdict.'
+      : 'Each hook promises exactly what the brief delivers and keeps the premise intact. Never question, doubt, or undermine the premise, and never ask whether it is true.',
+    'Use three techniques: a vivid cold open, a teaser of the most striking thing the video will show, and a direct line to the viewer.',
+    factRule(brief),
+    'No generic greetings, and no twist the brief cannot deliver.',
+    `Write in ${lang}.`
+  ].join(' ')
+  const result = await generateJson<HookOptions>({
+    system,
+    prompt: `Creator idea:\n${project.synopsis}\n\nBrief:\n${briefText(brief)}\n\nTarget video length: about ${project.durationSec} seconds. Return exactly three options.`,
+    schema: HOOK_SCHEMA,
+    name: 'story-hooks'
+  })
+  const hooks = (result.hooks ?? []).map(str).filter(Boolean).slice(0, 3)
+  if (hooks.length < 3) throw new Error('AI belum menghasilkan tiga pilihan hook. Coba lagi.')
+  return hooks
+}
+
+interface ScriptOutline {
+  title?: string
+  acts?: { title?: string; summary?: string; scenes?: number; beats?: string[] }[]
+}
+
+const SCRIPT_OUTLINE_SCHEMA = {
   type: 'object',
   additionalProperties: false,
   properties: {
-    story: { type: 'string', description: 'One or two sentences describing what happens in this scene.' },
-    narration: { type: 'string', description: 'Natural voice-over in the target language, sized for this scene.' }
+    title: { type: 'string' },
+    acts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          title: { type: 'string' },
+          summary: { type: 'string' },
+          scenes: { type: 'integer' },
+          beats: { type: 'array', items: { type: 'string' } }
+        },
+        required: ['title', 'summary', 'scenes', 'beats']
+      }
+    }
   },
-  required: ['story', 'narration']
+  required: ['title', 'acts']
 }
-
-interface HookOptions { hooks?: string[] }
 
 function balanceActs(source: ScriptOutline['acts'], count: number): StoryAct[] {
   const acts = (source ?? []).slice(0, count).map((a, i) => ({
     title: str(a.title) || `Babak ${i + 1}`,
     summary: str(a.summary),
-    scenes: Math.max(1, Math.round(Number(a.scenes) || 1))
+    scenes: Math.max(1, Math.round(Number(a.scenes) || 1)),
+    beats: strList(a.beats, 8)
   }))
   if (!acts.length) throw new Error('AI belum menghasilkan kerangka cerita. Coba susun kerangka lagi.')
   let delta = count - acts.reduce((n, a) => n + a.scenes, 0)
@@ -109,157 +210,351 @@ function balanceActs(source: ScriptOutline['acts'], count: number): StoryAct[] {
   return acts
 }
 
-interface PendingLongScript {
-  fingerprint: string
-  title: string
-  acts: { title: string; summary: string; scenes: number }[]
-  groups: Map<number, { title?: string; story?: string; narration?: string }[]>
-}
+const outlineText = (acts: StoryAct[]): string =>
+  acts.map((a, n) => `${n + 1}. ${a.title} (${a.scenes} scenes): ${a.summary}${a.beats?.length ? `\n   Beats: ${a.beats.join('; ')}` : ''}`).join('\n')
 
-// If a model call fails, successful groups remain available for the user's next retry in this app session.
-const pendingLongScripts = new Map<string, PendingLongScript>()
-
-/** Offers several openings so the creator can choose the promise the story will fulfill. */
-export async function generateHooks(projectId: string): Promise<string[]> {
-  const project = getProject(projectId)
-  if (!project.synopsis.trim()) throw new Error('Tulis ide cerita atau sinopsis dulu.')
-  const lang = languageOf(project.language)
-  const system = [
-    'You write opening hooks for faceless YouTube stories and explainers.',
-    'Create three distinct, truthful hooks in the target language: one vivid cold open, one curiosity question, and one surprising contradiction or consequence.',
-    'Each hook is one short spoken line that can be shown as a concrete opening image.',
-    'Do not invent factual claims for history or science topics. Do not use generic greetings or promise a twist the idea cannot deliver.',
-    `Write in ${lang}.`
-  ].join(' ')
-  const result = await generateJson<HookOptions>({
-    system,
-    prompt: `Idea / synopsis:\n${project.synopsis}\n\nTarget video length: about ${project.durationSec} seconds. Return exactly three options.`,
-    schema: HOOK_SCHEMA,
-    name: 'story-hooks'
-  })
-  const hooks = (result.hooks ?? []).map(str).filter(Boolean).slice(0, 3)
-  if (hooks.length < 3) throw new Error('AI belum menghasilkan tiga pilihan hook. Coba lagi.')
-  return hooks
-}
-
-/** Builds the reviewable act outline around the hook the creator chose. */
-export async function generateOutline(projectId: string, hook: string): Promise<StoryPlan> {
+/** Builds the reviewable act outline so every brief point lands in exactly one act. */
+export async function generateOutline(projectId: string, hook: string, rawBrief?: StoryBrief): Promise<StoryPlan> {
   const project = getProject(projectId)
   const chosenHook = str(hook)
   if (!project.synopsis.trim()) throw new Error('Tulis ide cerita atau sinopsis dulu.')
   if (!chosenHook) throw new Error('Pilih atau tulis hook dulu.')
+  const brief = rawBrief ? normalizeBrief(rawBrief) : await briefFor(project)
   const lang = languageOf(project.language)
   const count = clipCountFor(project.durationSec)
   const previousPlan = project.storyPlan
   const system = [
-    'You are a narrative architect for faceless YouTube stories and explainers.',
-    'Make a coherent outline that starts by honoring the chosen hook, builds a clear cause-and-effect chain, escalates stakes or understanding, and resolves the hook promise.',
-    'Use 3 to 6 acts, no more acts than scenes, with each act summary specific enough to draft scenes from.',
-    'Keep history and science facts accurate; mark uncertainty in the summary rather than inventing evidence.',
-    `Write the title and summaries in ${lang}.`
+    'You are a narrative architect for faceless YouTube videos.',
+    FORMAT_GUIDE[brief.format],
+    factRule(brief),
+    'The opening act honors the chosen hook; the final act fulfils its promise.',
+    'Assign every must-cover point to exactly one act as its beats. No two acts cover the same ground, and no act repeats an earlier one.',
+    'Use 3 to 8 acts, never more acts than scenes. For a list, use about one act per item and group items only when there are more than 8.',
+    'Summaries say concretely what the viewer sees or learns. Never describe the video from outside, as in "the video explains" or "the narration stresses".',
+    `Write the title, summaries, and beats in ${lang}.`
   ].join(' ')
   const outline = await generateJson<ScriptOutline>({
     system,
-    prompt: `Idea / synopsis:\n${project.synopsis}\n\nChosen opening hook:\n${chosenHook}\n\nTarget video length: about ${project.durationSec} seconds.\nDistribute exactly ${count} scenes across the acts. The opening act must establish the hook and its central question; the final act must answer it. Return a short video title and the outline only.`,
+    prompt: [
+      `Creator idea:\n${project.synopsis}`,
+      `Brief:\n${briefText(brief)}`,
+      `Chosen opening hook:\n${chosenHook}`,
+      `Target video length: about ${project.durationSec} seconds. Distribute exactly ${count} scenes across the acts, giving more scenes to acts with more to show. Return a short video title and the outline only.`
+    ].join('\n\n'),
     schema: SCRIPT_OUTLINE_SCHEMA,
     name: 'story-outline'
   })
-  const plan: StoryPlan = {
+  return {
     hookMode: previousPlan?.hookMode ?? 'manual',
     hookOptions: previousPlan?.hookOptions ?? [],
     hook: chosenHook,
     title: str(outline.title) || project.title,
-    acts: balanceActs(outline.acts, count)
+    acts: balanceActs(outline.acts, count),
+    brief
   }
-  return plan
 }
 
-/** Writes scenes from the reviewed hook and outline. */
+// ---------- step 1 → 2: the script ----------
+
+const DRAFT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    acts: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: { narration: { type: 'string', description: 'The full voice-over of this act as continuous spoken prose.' } },
+        required: ['narration']
+      }
+    }
+  },
+  required: ['acts']
+}
+
+const ACT_DRAFT_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: { narration: { type: 'string', description: 'The full voice-over of this act as continuous spoken prose.' } },
+  required: ['narration']
+}
+
+/** OpenAI strict mode needs every property required and no extra keys; Gemini accepts the same shape. */
+const SCENE_NOTES_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    scenes: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          title: { type: 'string', description: 'Short scene title in the target language.' },
+          story: { type: 'string', description: 'One concrete sentence of what is on screen: who or what, where, doing what.' }
+        },
+        required: ['title', 'story']
+      }
+    }
+  },
+  required: ['scenes']
+}
+
+const REVIEW_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    issues: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          scene: { type: 'integer', description: 'Scene number as listed.' },
+          problem: { type: 'string' },
+          instruction: { type: 'string', description: 'What the rewrite of this scene must do.' }
+        },
+        required: ['scene', 'problem', 'instruction']
+      }
+    }
+  },
+  required: ['issues']
+}
+
+const REVISED_SCENE_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    story: { type: 'string', description: 'One concrete sentence of what is on screen in this scene.' },
+    narration: { type: 'string', description: 'Natural voice-over in the target language, sized for this scene.' }
+  },
+  required: ['story', 'narration']
+}
+
+interface DraftScene { title: string; story: string; narration: string }
+
+interface PendingScript {
+  fingerprint: string
+  drafts: Map<number, string>
+  notes: Map<number, { title?: string; story?: string }[]>
+}
+
+// If a model call fails, finished stages stay available for the user's next retry in this app session.
+const pendingScripts = new Map<string, PendingScript>()
+
+const VOICE_TAG_RULE =
+  'Where it helps delivery, add an English vocal tag in angle brackets, such as <short pause>, <long pause>, <chuckles>, <sigh>, <gasp>, or <whispers>, at most one per 40 words. Never add other markup.'
+const MAX_REVIEW_FIXES = 8
+const NOTES_GROUP = 40
+
+function draftSystem(brief: StoryBrief, lang: string): string {
+  return [
+    'You are a scriptwriter for faceless YouTube videos. Write the voice-over as continuous spoken prose, the way a skilled narrator talks: connected sentences, concrete details, no headings, no lists, no stage directions.',
+    FORMAT_GUIDE[brief.format],
+    factRule(brief),
+    'Deliver every beat with specific content such as names, traits, events, and sensory detail instead of talking about the topic from outside.',
+    'Never repeat a point that was already made, and skip filler transitions such as "let us continue".',
+    'Use short to medium sentences, each one clear thought that could be illustrated, because the text is later cut into short scenes at sentence breaks.',
+    VOICE_TAG_RULE,
+    `Write in ${lang}, except vocal tags, which stay in English.`
+  ].join(' ')
+}
+
+function planContext(project: Project, plan: StoryPlan, brief: StoryBrief): string {
+  return [
+    `Creator idea:\n${project.synopsis}`,
+    `Brief:\n${briefText(brief)}`,
+    `Video title: ${plan.title || project.title}`,
+    `Chosen opening hook: ${plan.hook}`,
+    `Complete outline:\n${outlineText(plan.acts)}`
+  ].join('\n\n')
+}
+
+const actTarget = (act: StoryAct, wordsPerScene: number): number => Math.round(act.scenes * wordsPerScene)
+
+/** Writes each act as one flowing narration; short scripts in one call so the whole arc is planned together. */
+async function draftActs(project: Project, plan: StoryPlan, brief: StoryBrief, pending: PendingScript, wordsPerScene: number): Promise<string[]> {
+  const lang = languageOf(project.language)
+  const system = draftSystem(brief, lang)
+  const context = planContext(project, plan, brief)
+  const count = plan.acts.reduce((n, a) => n + a.scenes, 0)
+  const hookRule = 'The first words of act 1 are the exact chosen hook.'
+  if (count <= 60 && pending.drafts.size < plan.acts.length) {
+    emit.storyProgress({ projectId: project.id, message: 'Menulis narasi utuh…' })
+    const lengths = plan.acts.map((a, i) => `Act ${i + 1}: about ${actTarget(a, wordsPerScene)} spoken words`).join('\n')
+    const result = await generateJson<{ acts?: { narration?: string }[] }>({
+      system,
+      prompt: `${context}\n\n${hookRule} Write the narration for all ${plan.acts.length} acts, in order, one entry per act. Each act delivers its beats and flows into the next.\n${lengths}`,
+      schema: DRAFT_SCHEMA,
+      name: 'script-draft'
+    })
+    const acts = (result.acts ?? []).map((a) => str(a.narration))
+    if (acts.length < plan.acts.length || acts.some((a) => !a)) throw new Error('AI belum menulis narasi untuk semua babak. Coba lagi.')
+    acts.slice(0, plan.acts.length).forEach((a, i) => pending.drafts.set(i, a))
+  }
+  for (let i = 0; i < plan.acts.length; i++) {
+    if (pending.drafts.has(i)) continue
+    const act = plan.acts[i]
+    emit.storyProgress({ projectId: project.id, message: `Menulis narasi babak ${i + 1} dari ${plan.acts.length}` })
+    const before = [...pending.drafts.entries()].sort((a, b) => a[0] - b[0])
+    const covered = plan.acts.slice(0, i).map((a, n) => `${n + 1}. ${a.title}: ${(a.beats ?? []).join('; ') || a.summary}`).join('\n')
+    const tail = before.length ? before[before.length - 1][1].split(/\s+/).slice(-120).join(' ') : ''
+    const result = await generateJson<{ narration?: string }>({
+      system,
+      prompt: [
+        context,
+        i === 0 ? hookRule : `Already covered in earlier acts, do not repeat:\n${covered}`,
+        tail && `The narration so far ends with:\n…${tail}\nContinue seamlessly from there.`,
+        `Write act ${i + 1}: ${act.title}. ${act.summary}${act.beats?.length ? `\nBeats to deliver: ${act.beats.join('; ')}` : ''}\nAbout ${actTarget(act, wordsPerScene)} spoken words.`
+      ].filter(Boolean).join('\n\n'),
+      schema: ACT_DRAFT_SCHEMA,
+      name: `script-draft-${i + 1}`
+    })
+    const narration = str(result.narration)
+    if (!narration) throw new Error(`Narasi babak ${i + 1} masih kosong. Coba lagi untuk melanjutkan.`)
+    pending.drafts.set(i, narration)
+  }
+  const drafts = plan.acts.map((_, i) => pending.drafts.get(i) ?? '')
+  if (!drafts[0].toLocaleLowerCase().startsWith(plan.hook.toLocaleLowerCase())) drafts[0] = `${plan.hook} ${drafts[0]}`.trim()
+  return drafts
+}
+
+/** Adds titles and on-screen descriptions to the cut narration; the visual step plans images from these. */
+async function writeSceneNotes(project: Project, plan: StoryPlan, brief: StoryBrief, pending: PendingScript, scenes: { act: number; narration: string }[]): Promise<DraftScene[]> {
+  const lang = languageOf(project.language)
+  const system = [
+    'You are a storyboard writer for faceless YouTube videos. For each numbered voice-over segment, write a short scene title and a story note.',
+    'The story note is one concrete sentence of what is on screen: who or what, where, doing what. It must match the segment and the brief.',
+    'Never describe the narration itself, as in "the narrator explains"; describe the picture.',
+    factRule(brief),
+    `Write in ${lang}. Return exactly one entry per segment, in order.`
+  ].join(' ')
+  const out: DraftScene[] = []
+  for (let from = 0, g = 0; from < scenes.length; from += NOTES_GROUP, g++) {
+    const slice = scenes.slice(from, from + NOTES_GROUP)
+    let rows = pending.notes.get(g)
+    if (!rows) {
+      emit.storyProgress({ projectId: project.id, message: `Menyusun adegan ${from + 1}–${from + slice.length} dari ${scenes.length}` })
+      const listed = slice.map((s, i) => `${from + i + 1}. [Act ${s.act + 1}: ${plan.acts[s.act].title}] ${s.narration}`).join('\n')
+      const result = await generateJson<{ scenes?: { title?: string; story?: string }[] }>({
+        system,
+        prompt: `Brief:\n${briefText(brief)}\n\nVideo title: ${plan.title || project.title}\n\nSegments:\n${listed}`,
+        schema: SCENE_NOTES_SCHEMA,
+        name: `script-notes-${g + 1}`
+      })
+      rows = result.scenes ?? []
+      pending.notes.set(g, rows)
+    }
+    slice.forEach((s, i) => out.push({ title: str(rows?.[i]?.title) || `Adegan ${from + i + 1}`, story: str(rows?.[i]?.story), narration: s.narration }))
+  }
+  return out
+}
+
+/** Rewrites one scene with its neighbours as context; shared by the review pass and the creator's revise action. */
+async function rewriteScene(project: Project, brief: StoryBrief | null, scenes: DraftScene[], index: number, instruction: string): Promise<{ story: string; narration: string }> {
+  const lang = languageOf(project.language)
+  const scene = scenes[index]
+  const from = Math.max(0, index - 1)
+  const context = scenes.slice(from, index + 2).map((c, i) => `${from + i + 1}. ${c.title}\nStory: ${c.story}\nNarration: ${c.narration}`).join('\n\n')
+  const plan = project.storyPlan
+  const result = await generateJson<{ story?: string; narration?: string }>({
+    system: [
+      'You are a script editor revising one scene in a faceless YouTube video.',
+      'Follow the instruction while preserving established facts, names, continuity, and the neighbouring scenes.',
+      'Keep the narration natural to speak, flowing from the previous scene into the next, and close to the original length. Do not alter the rest of the story.',
+      brief ? factRule(brief) : '',
+      index === 0 && plan?.hook ? `This is the opening scene; its narration must still start with the exact hook: ${plan.hook}` : '',
+      `Write the replacement story note and narration in ${lang}.`
+    ].filter(Boolean).join(' '),
+    prompt: [
+      `Creator idea:\n${project.synopsis}`,
+      brief && `Brief:\n${briefText(brief)}`,
+      plan?.hook && `Opening hook: ${plan.hook}`,
+      plan?.acts.length && `Reviewed outline:\n${outlineText(plan.acts)}`,
+      `Context around the selected scene:\n${context}`,
+      `Selected scene to revise:\n${index + 1}. ${scene.title}\nStory: ${scene.story}\nNarration: ${scene.narration}`,
+      `Instruction: ${instruction}`
+    ].filter(Boolean).join('\n\n'),
+    schema: REVISED_SCENE_SCHEMA,
+    name: 'revise-scene'
+  })
+  return { story: str(result.story), narration: str(result.narration) }
+}
+
+/** One editor pass that catches what drafting misses: absent brief points, repeats, and scenes that talk about the topic instead of delivering it. */
+async function reviewScript(project: Project, plan: StoryPlan, brief: StoryBrief, scenes: DraftScene[]): Promise<void> {
+  emit.storyProgress({ projectId: project.id, message: 'Memeriksa naskah…' })
+  const listed = scenes.map((s, i) => `${i + 1}. ${s.title}: ${s.narration}`).join('\n')
+  const result = await generateJson<{ issues?: { scene?: number; problem?: string; instruction?: string }[] }>({
+    system: [
+      'You are a story editor checking a finished faceless YouTube script against its brief.',
+      'Flag only real problems: a must-cover point that is missing or only mentioned vaguely, a scene that repeats an earlier scene, a scene that drifts away from the brief or into an avoided direction, or a scene that talks about the topic from outside instead of delivering content.',
+      factRule(brief),
+      'For a missing point, choose the weakest or most repetitive scene where it fits and instruct the rewrite to deliver it there.',
+      `Return at most ${MAX_REVIEW_FIXES} issues, most important first, and an empty list when the script is fine. Write problems and instructions in English.`
+    ].join(' '),
+    prompt: `Brief:\n${briefText(brief)}\n\nOutline:\n${outlineText(plan.acts)}\n\nScript:\n${listed}`,
+    schema: REVIEW_SCHEMA,
+    name: 'script-review'
+  })
+  const seen = new Set<number>()
+  const fixes = (result.issues ?? [])
+    .map((issue) => ({ index: Math.round(Number(issue.scene)) - 1, instruction: [str(issue.problem), str(issue.instruction)].filter(Boolean).join(' ') }))
+    .filter((f) => f.index >= 0 && f.index < scenes.length && f.instruction && !seen.has(f.index) && seen.add(f.index))
+    .slice(0, MAX_REVIEW_FIXES)
+  for (let i = 0; i < fixes.length; i++) {
+    emit.storyProgress({ projectId: project.id, message: `Merapikan adegan ${fixes[i].index + 1} (${i + 1} dari ${fixes.length})` })
+    const scene = scenes[fixes[i].index]
+    const revised = await rewriteScene(project, brief, scenes, fixes[i].index, `${fixes[i].instruction} Keep about ${wordCount(scene.narration)} spoken words.`)
+    if (revised.narration) scenes[fixes[i].index] = { ...scene, story: revised.story || scene.story, narration: revised.narration }
+  }
+}
+
+/**
+ * Writes the script narration-first: each act as flowing prose, cut into scenes at sentence breaks, then
+ * given on-screen notes and one review pass. Cutting already-written prose keeps the voice-over continuous,
+ * which matters because narration.ts records it as one take.
+ */
 export async function generateScript(projectId: string): Promise<ProjectBundle> {
   const project = getProject(projectId)
   if (!project.synopsis.trim()) throw new Error('Tulis ide cerita atau sinopsis dulu.')
-  const plan = project.storyPlan
-  if (!plan?.hook.trim() || !plan.acts.length) throw new Error('Pilih hook dan susun kerangka cerita dulu.')
-  const lang = languageOf(project.language)
-  const count = clipCountFor(project.durationSec)
-  const system = [
-    'You are a scriptwriter for faceless YouTube storytelling and explainer videos.',
-    'Turn the reviewed act outline into a sequence of short scenes. Each scene has a concrete story action and one natural voice-over passage.',
-    'Scene 1 of the complete script must start with the exact chosen hook. Continue its question immediately and deliver its answer by the ending; never make a false promise.',
-    'Every scene should add information, change a decision, increase stakes, or prepare a payoff. Avoid repeated exposition and generic transitions.',
-    'Keep facts accurate for history and science topics, and always call each character by the same name.',
-    'Where it helps delivery, add at most one English vocal tag in angle brackets, such as <short pause>, <long pause>, <chuckles>, <sigh>, <gasp> or <whispers>. Never add other markup.',
-    `Write all story notes and narration in ${lang}, except vocal tags, which stay in English.`
-  ].join(' ')
-  const groups: { from: number; count: number; act: StoryAct }[] = []
-  let offset = 0
-  for (const act of plan.acts) {
-    let left = act.scenes
-    while (left > 0) {
-      const take = Math.min(30, left)
-      groups.push({ from: offset, count: take, act })
-      offset += take
-      left -= take
-    }
-  }
+  const savedPlan = project.storyPlan
+  if (!savedPlan?.hook.trim() || !savedPlan.acts.length) throw new Error('Pilih hook dan susun kerangka cerita dulu.')
+  const brief = await briefFor(project)
+  const plan: StoryPlan = { ...savedPlan, brief }
+  const count = plan.acts.reduce((n, a) => n + a.scenes, 0) || clipCountFor(project.durationSec)
   const fingerprint = JSON.stringify([project.synopsis, project.durationSec, project.language, plan])
-  let pending = count > 60 ? pendingLongScripts.get(projectId) : undefined
+  let pending = pendingScripts.get(projectId)
   if (!pending || pending.fingerprint !== fingerprint) {
-    pending = { fingerprint, title: plan.title || project.title, acts: plan.acts, groups: new Map() }
-    if (count > 60) pendingLongScripts.set(projectId, pending)
+    pending = { fingerprint, drafts: new Map(), notes: new Map() }
+    pendingScripts.set(projectId, pending)
   }
+  // Spoken words that fill each scene's share of the target length, at the pace estimateNarrationMs assumes.
   const wordsPerScene = Math.max(8, (project.durationSec / count - 0.6) * 2.6)
-  const wordsLow = Math.round(wordsPerScene * 0.85)
-  const wordsHigh = Math.round(wordsPerScene * 1.15)
-  const built: { title?: string; story?: string; narration?: string }[] = []
-  for (let i = 0; i < groups.length; i++) {
-    const group = groups[i]
-    let rows = pending.groups.get(i)
-    if (!rows) {
-      emit.storyProgress({ projectId, message: `Menulis adegan ${group.from + 1}–${group.from + group.count} dari ${count}` })
-      const previous = [...pending.groups.values()].flat().slice(-2)
-      const groupPrompt = [
-        `Idea / synopsis:\n${project.synopsis}`,
-        `Target video length: about ${project.durationSec} seconds. Write scenes ${group.from + 1} through ${group.from + group.count} (exactly ${group.count} scenes).`,
-        `Video title: ${pending.title}`,
-        group.from === 0
-          ? `Chosen hook (use this exact wording at the start of scene 1 narration): ${plan.hook}`
-          : `The opening hook has already been established: ${plan.hook}\nContinue its central question without repeating the hook, and reserve its answer for the ending.`,
-        `Complete story outline:\n${plan.acts.map((a, n) => `${n + 1}. ${a.title} (${a.scenes} scenes): ${a.summary}`).join('\n')}`,
-        `Current act: ${group.act.title}\nAct summary: ${group.act.summary}`,
-        previous.length ? `Continue naturally from these last scenes:\n${previous.map((s) => `${s.title}: ${s.story} Narration: ${s.narration}`).join('\n')}` : 'This is the opening group. Begin with the chosen hook, then establish the situation and the question it raises.',
-        `Write all scene titles, story notes and narration in ${lang}. Preserve character names and causal continuity. Narration should be ${wordsLow} to ${wordsHigh} spoken words per scene, except the opening hook may be shorter.`
-      ].join('\n\n')
-      const result = await generateJson<ScriptPlan>({ system, prompt: groupPrompt, schema: SCRIPT_SCHEMA, name: `script-part-${i + 1}` })
-      rows = (result.scenes ?? []).filter((c) => str(c.narration) || str(c.story)).slice(0, group.count)
-      if (rows.length < group.count) throw new Error(`Babak ${i + 1} menghasilkan ${rows.length} dari ${group.count} adegan. Coba lagi untuk melanjutkan.`)
-      if (group.from === 0 && rows[0]) {
-        const narration = str(rows[0].narration)
-        if (!narration.toLocaleLowerCase().startsWith(plan.hook.toLocaleLowerCase())) rows[0].narration = `${plan.hook} ${narration}`.trim()
-      }
-      pending.groups.set(i, rows)
-    }
-    built.push(...rows)
-    emit.storyProgress({ projectId, message: `Naskah ${Math.min(count, group.from + group.count)} dari ${count} adegan selesai` })
-  }
-  if (count > 60) pendingLongScripts.delete(projectId)
-  const scenes = built.filter((c) => str(c.narration) || str(c.story))
-  if (!scenes.length) throw new Error('Model tidak menghasilkan adegan. Coba lagi atau pilih model lain di Pengaturan.')
 
+  const drafts = await draftActs(project, plan, brief, pending, wordsPerScene)
+  const cut = drafts.flatMap((text, act) => splitNarration(text, plan.acts[act].scenes).map((narration) => ({ act, narration })))
+  const scenes = await writeSceneNotes(project, plan, brief, pending, cut)
+  try {
+    await reviewScript(project, plan, brief, scenes)
+  } catch (e) {
+    // The draft is already usable; a failed review should not cost the creator the whole script.
+    console.warn('[story] script review skipped:', e instanceof Error ? e.message : e)
+  }
+  pendingScripts.delete(projectId)
+
+  const kept = scenes.filter((c) => c.narration || c.story)
+  if (!kept.length) throw new Error('Model tidak menghasilkan adegan. Coba lagi atau pilih model lain di Pengaturan.')
   replaceScript(
     projectId,
     plan.title || project.title,
-    scenes.map((c, i) => ({
-      title: str(c.title) || `Adegan ${i + 1}`,
-      story: str(c.story),
-      narration: str(c.narration),
-      durationMs: estimateNarrationMs(str(c.narration))
-    }))
+    kept.map((c, i) => ({ title: c.title || `Adegan ${i + 1}`, story: c.story, narration: c.narration, durationMs: estimateNarrationMs(c.narration) }))
   )
   return getBundle(projectId)
 }
 
-/** Rewrites one scene with nearby context so edits still fit the selected hook and act outline. */
+/** Rewrites one scene with nearby context so edits still fit the brief, hook, and act outline. */
 export async function reviseScene(projectId: string, clipId: string, instruction: string): Promise<{ story: string; narration: string }> {
   const project = getProject(projectId)
   const clips = clipsOf(projectId)
@@ -267,31 +562,9 @@ export async function reviseScene(projectId: string, clipId: string, instruction
   if (index < 0) throw new Error('Adegan yang dipilih tidak ditemukan.')
   const request = str(instruction)
   if (!request) throw new Error('Tulis perubahan yang kamu inginkan dulu.')
-  const clip = clips[index]
-  const lang = languageOf(project.language)
-  const context = clips.slice(Math.max(0, index - 1), index + 2).map((c, i) =>
-    `${Math.max(0, index - 1) + i + 1}. ${c.title}\nStory: ${c.story}\nNarration: ${c.narration}`
-  ).join('\n\n')
-  const result = await generateJson<{ story?: string; narration?: string }>({
-    system: [
-      'You are a script editor revising one scene in a faceless YouTube story or explainer.',
-      'Follow the creator instruction while preserving established facts, character names, causal continuity, and the neighboring scenes.',
-      'Keep the narration natural to speak and close to the original scene length. Do not alter the rest of the story.',
-      `Write the replacement story note and narration in ${lang}.`
-    ].join(' '),
-    prompt: [
-      `Idea / synopsis:\n${project.synopsis}`,
-      project.storyPlan?.hook && `Opening hook: ${project.storyPlan.hook}`,
-      project.storyPlan?.acts.length && `Reviewed outline:\n${project.storyPlan.acts.map((a) => `${a.title}: ${a.summary}`).join('\n')}`,
-      `Context around the selected scene:\n${context}`,
-      `Selected scene to revise:\n${index + 1}. ${clip.title}\nStory: ${clip.story}\nNarration: ${clip.narration}`,
-      `Creator instruction: ${request}`
-    ].filter(Boolean).join('\n\n'),
-    schema: REVISED_SCENE_SCHEMA,
-    name: 'revise-scene'
-  })
-  const story = str(result.story)
-  const narration = str(result.narration)
+  const brief = project.storyPlan?.brief ? normalizeBrief(project.storyPlan.brief) : null
+  const scenes = clips.map((c) => ({ title: c.title, story: c.story, narration: c.narration }))
+  const { story, narration } = await rewriteScene(project, brief, scenes, index, request)
   if (!story || !narration) throw new Error('AI belum menghasilkan revisi adegan yang lengkap. Coba lagi.')
   return { story, narration }
 }

@@ -4,7 +4,7 @@ import { getFlow2ApiModel } from '@shared/flow2api-catalog'
 import { getImageModel } from '@shared/higgsfield'
 import { DURATIONS, LANGUAGES, clipCountFor, llmName } from '@shared/models'
 import { getStyle } from '@shared/styles'
-import type { AppSettings, KeyStatus, LlmProvider, StoryPlan, TtsProvider, VoiceOption } from '@shared/types'
+import type { AppSettings, KeyStatus, LlmProvider, StoryBrief, StoryFactMode, StoryFormat, StoryPlan, TtsProvider, VoiceOption } from '@shared/types'
 import { Select } from '../../components/Select'
 import { StylePicker } from '../../components/StylePicker'
 import { Button, Chip, Field, Segmented, confirmDialog, cx } from '../../components/ui'
@@ -103,6 +103,23 @@ function VoicePicker({ provider, value, onChange }: { provider: TtsProvider; val
   )
 }
 
+const FORMAT_OPTIONS: { value: StoryFormat; label: string }[] = [
+  { value: 'story', label: 'Cerita' },
+  { value: 'list', label: 'Daftar / ragam' },
+  { value: 'explainer', label: 'Penjelasan' },
+  { value: 'documentary', label: 'Dokumenter' },
+  { value: 'factcheck', label: 'Cek fakta' }
+]
+
+const FACT_OPTIONS: { value: StoryFactMode; label: string }[] = [
+  { value: 'factual', label: 'Fakta nyata' },
+  { value: 'folklore', label: 'Cerita rakyat / horor' },
+  { value: 'fiction', label: 'Fiksi' }
+]
+
+// Empty lines stay while typing so Enter works; the main process drops them before writing.
+const linesOf = (text: string): string[] => text.split('\n')
+
 export function IdeaStep() {
   const { project, clips, updateProject, flush, load } = useProject()
   const { toast, go } = useApp()
@@ -150,8 +167,14 @@ export function IdeaStep() {
       : getImageModel(project.imageModel).name
   const hasHook = !!storyPlan?.hook.trim()
   const hasOutline = !!storyPlan?.acts.length
-  const actionLabel = hasOutline ? (clips.length ? 'Susun ulang naskah' : 'Buat naskah') : hasHook ? 'Susun kerangka cerita' : hookMode === 'automatic' ? 'Buat pilihan hook' : 'Isi hook untuk lanjut'
-  const actionDisabled = !!busy || (!hasOutline && hookMode === 'manual' && !hasHook) || (!hasOutline && hookMode === 'automatic' && !!storyPlan?.hookOptions.length && !hasHook)
+  const brief = storyPlan?.brief ?? null
+  // Plans saved before briefs existed may already have a hook; those continue and get a brief at script time.
+  const needsBrief = !brief && !hasHook
+  const actionLabel = hasOutline ? (clips.length ? 'Susun ulang naskah' : 'Buat naskah') : hasHook ? 'Susun kerangka cerita' : needsBrief ? 'Pahami idenya' : hookMode === 'manual' ? 'Isi hook untuk lanjut' : storyPlan?.hookOptions.length ? 'Pilih hook untuk lanjut' : 'Buat pilihan hook'
+  const actionDisabled =
+    !!busy ||
+    (!hasOutline && !needsBrief && hookMode === 'manual' && !hasHook) ||
+    (!hasOutline && !needsBrief && hookMode === 'automatic' && !!storyPlan?.hookOptions.length && !hasHook)
 
   const updateStoryPlan = (patch: Partial<StoryPlan>): void => {
     if (!project) return
@@ -164,6 +187,33 @@ export function IdeaStep() {
     updateProject({ storyPlan: { ...current, hookMode: mode, hookOptions: mode === 'manual' ? [] : current.hookOptions, hook: mode === 'manual' ? current.hook : '' , acts: [] } })
   }
 
+  // A changed brief makes the outline stale, but the hooks may still fit, so only the acts are cleared.
+  const updateBrief = (patch: Partial<StoryBrief>): void => {
+    if (!brief) return
+    updateStoryPlan({ brief: { ...brief, ...patch }, acts: [] })
+  }
+
+  const makeBrief = async (): Promise<void> => {
+    if (!project.synopsis.trim()) {
+      toast('error', 'Tulis ide cerita atau sinopsis dulu.')
+      return
+    }
+    setBusy(true)
+    setPlanMessage('Memahami idemu…')
+    try {
+      await flush()
+      const next = await window.api.story.brief(project.id)
+      const keepHook = hookMode === 'manual' ? project.storyPlan?.hook ?? '' : ''
+      updateProject({ storyPlan: { hookMode, hookOptions: [], hook: keepHook, title: '', acts: [], brief: next } })
+      toast('success', 'Arah cerita siap. Periksa poin yang wajib dibahas, lalu lanjut ke hook.')
+    } catch (e) {
+      toast('error', errorText(e))
+    } finally {
+      setBusy(false)
+      setPlanMessage('')
+    }
+  }
+
   const makeHooks = async (): Promise<void> => {
     if (!project.synopsis.trim()) {
       toast('error', 'Tulis ide cerita atau sinopsis dulu.')
@@ -173,8 +223,9 @@ export function IdeaStep() {
     setPlanMessage('Mencari pilihan hook…')
     try {
       await flush()
-      const hookOptions = await window.api.story.hooks(project.id)
-      updateProject({ storyPlan: { hookMode: 'automatic', hookOptions, hook: hookOptions[0] ?? '', title: '', acts: [] } })
+      const hookOptions = await window.api.story.hooks(project.id, brief ?? undefined)
+      // No hook is preselected: the first option used to slip through unread and set the whole video's direction.
+      updateProject({ storyPlan: { hookMode: 'automatic', hookOptions, hook: '', title: '', acts: [], brief: brief ?? undefined } })
       toast('success', 'Tiga pilihan hook siap. Pilih atau edit salah satunya dulu.')
     } catch (e) {
       toast('error', errorText(e))
@@ -193,7 +244,7 @@ export function IdeaStep() {
     setPlanMessage('Menyusun kerangka cerita…')
     try {
       await flush()
-      const outline = await window.api.story.outline(project.id, storyPlan.hook)
+      const outline = await window.api.story.outline(project.id, storyPlan.hook, brief ?? undefined)
       updateProject({ storyPlan: outline })
       toast('success', 'Kerangka siap ditinjau. Kamu bisa mengubah judul dan ringkasan tiap babak.')
     } catch (e) {
@@ -264,6 +315,67 @@ export function IdeaStep() {
               </div>
             </div>
 
+            {brief && (
+              <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-5">
+                <div className="flex flex-wrap items-start justify-between gap-3">
+                  <div>
+                    <h2 className="font-display text-xl font-bold">Arah cerita</h2>
+                    <p className="mt-1 text-[13px] text-ink-2">
+                      Begini AI memahami idemu. Hook, kerangka, dan naskah akan mengikuti arah ini, jadi rapikan dulu kalau ada yang meleset.
+                    </p>
+                  </div>
+                  <button type="button" onClick={() => void makeBrief()} disabled={busy} className="shrink-0 text-[13px] font-semibold text-accent-dark hover:underline disabled:opacity-50">
+                    Baca ulang ide
+                  </button>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="Bentuk video">
+                    <Select label="Bentuk video" value={brief.format} onChange={(v) => updateBrief({ format: v })} options={FORMAT_OPTIONS} />
+                  </Field>
+                  <Field label="Sifat isi">
+                    <Select label="Sifat isi" value={brief.factMode} onChange={(v) => updateBrief({ factMode: v })} options={FACT_OPTIONS} />
+                  </Field>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs font-semibold text-ink-2">Suasana</span>
+                    <input
+                      value={brief.tone}
+                      onChange={(e) => updateBrief({ tone: e.target.value })}
+                      className="rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm outline-none focus:border-ink-2"
+                    />
+                  </label>
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs font-semibold text-ink-2">Sudut pandang narator</span>
+                    <input
+                      value={brief.angle}
+                      onChange={(e) => updateBrief({ angle: e.target.value })}
+                      className="rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm outline-none focus:border-ink-2"
+                    />
+                  </label>
+                </div>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-semibold text-ink-2">Wajib dibahas (satu poin per baris)</span>
+                  <textarea
+                    rows={Math.min(8, Math.max(3, brief.mustCover.length))}
+                    value={brief.mustCover.join('\n')}
+                    onChange={(e) => updateBrief({ mustCover: linesOf(e.target.value) })}
+                    className="resize-y rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm leading-relaxed outline-none focus:border-ink-2"
+                  />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-semibold text-ink-2">Hindari (satu poin per baris, boleh kosong)</span>
+                  <textarea
+                    rows={2}
+                    value={brief.avoid.join('\n')}
+                    onChange={(e) => updateBrief({ avoid: linesOf(e.target.value) })}
+                    className="resize-y rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm leading-relaxed outline-none focus:border-ink-2"
+                  />
+                </label>
+              </section>
+            )}
+
+            {(brief || hasHook) && (
             <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-5">
               <div className="flex flex-wrap items-start justify-between gap-3">
                 <div>
@@ -345,12 +457,25 @@ export function IdeaStep() {
                           onChange={(e) => updateStoryPlan({ acts: storyPlan.acts.map((a, n) => n === i ? { ...a, summary: e.target.value } : a) })}
                           className="resize-y rounded-lg bg-transparent text-[13px] leading-relaxed text-ink-2 outline-none"
                         />
+                        {act.beats && (
+                          <label className="flex flex-col gap-1 border-t border-line pt-2">
+                            <span className="text-[11px] font-semibold text-muted">Poin di babak ini</span>
+                            <textarea
+                              aria-label={`Poin babak ${i + 1}`}
+                              rows={Math.min(5, Math.max(2, act.beats.length))}
+                              value={act.beats.join('\n')}
+                              onChange={(e) => updateStoryPlan({ acts: storyPlan.acts.map((a, n) => (n === i ? { ...a, beats: linesOf(e.target.value) } : a)) })}
+                              className="resize-y rounded-lg bg-transparent text-[13px] leading-relaxed text-ink-2 outline-none"
+                            />
+                          </label>
+                        )}
                       </div>
                     ))}
                   </div>
                 </section>
               ) : null}
             </section>
+            )}
 
             <div className="flex flex-col gap-2">
               <span className="text-sm font-semibold">Durasi video</span>
@@ -488,7 +613,7 @@ export function IdeaStep() {
           disabled={actionDisabled}
           loading={busy}
           icon={!busy && <Sparkles className="size-[18px]" />}
-          onClick={() => void (hasOutline ? compose() : hasHook ? makeOutline() : makeHooks())}
+          onClick={() => void (hasOutline ? compose() : hasHook ? makeOutline() : needsBrief ? makeBrief() : makeHooks())}
         >
           {busy ? planMessage || 'Menyiapkan…' : actionLabel}
         </Button>

@@ -21,6 +21,7 @@ import type {
   ProjectBundle,
   ProjectSnapshot,
   ProjectSummary,
+  StoryBrief,
   StoryPlan,
   TtsProvider,
   ThumbnailConcept,
@@ -40,10 +41,12 @@ export interface StudioApi {
     duplicate(id: string): Promise<ProjectSummary>
   }
   story: {
-    /** Creates hook options for the project idea. */
-    hooks(projectId: string): Promise<string[]>
-    /** Creates an editable act outline around the selected hook. */
-    outline(projectId: string, hook: string): Promise<StoryPlan>
+    /** Reads the idea into an editable brief (format, truth mode, must-cover points) that later steps follow. */
+    brief(projectId: string): Promise<StoryBrief>
+    /** Creates hook options that fit the brief; without one, the main process creates it first. */
+    hooks(projectId: string, brief?: StoryBrief): Promise<string[]>
+    /** Creates an editable act outline around the selected hook, assigning each brief point to one act. */
+    outline(projectId: string, hook: string, brief?: StoryBrief): Promise<StoryPlan>
     /** Idea → scene-by-scene script (story and voice-over), using the reviewed plan. */
     script(projectId: string): Promise<ProjectBundle>
     /** Revises one scene while preserving continuity with the surrounding story. */

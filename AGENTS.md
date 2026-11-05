@@ -32,6 +32,7 @@ src/
     generation.ts  gambar/video Higgsfield, lembar karakter, TTS per klip, estimasi kredit
     narration.ts   narasi satu rekaman utuh lalu dipotong per adegan; sinkron caption
     whisper.ts     whisper.cpp lokal (unduh model, kenali kata)
+    narrationSplit.ts  potong narasi utuh per babak jadi adegan di batas kalimat
     align.ts, cuts.ts  cocokkan kata naskah ke hasil Whisper; pilih titik potong antar-adegan
     editing.ts     potong (split) klip, lepas suara klip
     exporter.ts    render MP4 dengan FFmpeg

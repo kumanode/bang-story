@@ -46,7 +46,7 @@ menjalankannya.
 | Properti | Arti |
 |---|---|
 | `title`, `synopsis` | judul (diisi AI saat menulis naskah) dan ide cerita |
-| `storyPlan` | hook terpilih, opsi hook otomatis, judul sementara, dan kerangka babak yang bisa ditinjau sebelum naskah dibuat; disimpan sebagai JSON di `story_plan_json` |
+| `storyPlan` | hook terpilih, opsi hook otomatis, judul sementara, dan kerangka babak (beserta `beats`), serta `brief` (bentuk video, sifat isi, poin wajib dibahas) yang bisa ditinjau sebelum naskah dibuat; disimpan sebagai JSON di `story_plan_json` |
 | `durationSec`, `language`, `aspectRatio` | target durasi, bahasa naskah/suara, `16:9` atau `9:16` |
 | `styleId` | gaya visual (`src/shared/styles.ts`, 24 gaya) |
 | `ttsProvider`, `ttsVoice` | `gemini` atau `elevenlabs` + ID suara |

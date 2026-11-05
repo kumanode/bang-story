@@ -16,7 +16,8 @@ import type {
   Project,
   ProjectBundle,
   ProjectSnapshot,
-  ProjectSummary
+  ProjectSummary,
+  StoryPlan
 } from '@shared/types'
 import { visualSourceOf } from '@shared/script'
 import { getDb } from './db'
@@ -221,6 +222,11 @@ export function touchProject(id: string, patch: Partial<Pick<Project, 'status' |
   getDb()
     .prepare(`UPDATE projects SET ${sets.join(', ')} WHERE id = @id`)
     .run({ ...patch, id, now: Date.now() })
+}
+
+/** Lets the script step keep a brief it had to create for plans saved before briefs existed. */
+export function setStoryPlan(id: string, plan: StoryPlan): void {
+  getDb().prepare('UPDATE projects SET story_plan_json = ?, updated_at = ? WHERE id = ?').run(JSON.stringify(plan), Date.now(), id)
 }
 
 /** Saves the editable parts of a project. Asset links stay owned by the main process. */
