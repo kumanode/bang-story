@@ -16,37 +16,52 @@ Ide cerita ──LLM──► Naskah (adegan + narasi) ──LLM──► Rencan
                                                                   FFmpeg → MP4
 ```
 
-## 1. Ide → hook → kerangka → naskah (`src/main/story.ts`)
+## 1. Ide → gaya → Kerangka Bab → naskah (`src/main/story.ts`)
 
 - Masukan: sinopsis, target durasi, bahasa.
 - Pilihan durasi: 1, 3, 5, 10, 15, 20, 25, atau 30 menit. Untuk durasi sampai 10 menit, targetnya sekitar satu adegan per 5,5 detik; di atas 10 menit sekitar satu adegan per 8 detik. Jumlah dibatasi maksimal 230 dan minimal 3.
 - Untuk durasi 15 menit atau lebih, halaman Ide memperlihatkan perkiraan jumlah adegan dan kredit gambar bila model menyediakan estimasi.
 - Sebelum membuat gambar atau video pada proyek berdurasi 10 menit atau lebih, aplikasi meminta konfirmasi jumlah adegan dan perkiraan kredit per adegan. Estimasi gambar menggunakan model yang dipilih; layanan yang tidak menyediakan endpoint estimasi tidak menampilkan jumlah kredit.
-Urutannya: **arah cerita (brief) → hook → kerangka → narasi utuh → dipecah per adegan → catatan adegan → pemeriksaan**.
+Urutannya: **sinopsis + gaya → Kerangka Bab yang bisa diedit → narasi per bab → cek gaya lokal + pemeriksaan kesetiaan → potong per adegan → catatan adegan**.
 
-- **Arah cerita** (`generateBrief`) dibuat pertama dan bisa diedit: bentuk video (`story`, `list`, `explainer`,
-  `documentary`, `factcheck`), sifat isi (`factual`, `folklore`, `fiction`), suasana, sudut pandang, poin yang
-  wajib dibahas, dan hal yang dihindari. Brief disimpan di `storyPlan.brief`, dan semua langkah sesudahnya
-  memakainya. Tujuannya agar ide pendek tidak ditafsirkan jadi video lain. Contohnya ide "jenis pocong sesuai
-  warna kafan" pernah berubah jadi video cek fakta. Proyek lama tanpa brief otomatis dibuatkan saat naskah ditulis.
-- Aturan kebenaran mengikuti sifat isi (`FACT_RULE`). Fakta nyata ditulis ketat. Cerita rakyat atau horor cukup
-  diberi penanda "menurut cerita yang beredar" sekali di awal, lalu diceritakan dengan yakin tanpa penyangkalan
-  berulang. Fiksi tanpa penyangkalan sama sekali. Mode cek fakta selalu memakai aturan fakta.
-- Hook (tiga opsi atau tulis sendiri) harus menjanjikan isi brief dan tidak boleh mempertanyakan premis, kecuali
-  formatnya cek fakta. Tidak ada opsi yang terpilih otomatis; kreator harus memilih salah satunya.
-- Kerangka berisi 3–8 babak. Setiap poin wajib dibahas masuk ke tepat satu babak (`StoryAct.beats`, bisa diedit).
-  Untuk format daftar, satu babak kira-kira berisi satu item.
-- **Narasi utuh dulu.** Setiap babak ditulis sebagai prosa lisan yang mengalir. Naskah sampai 60 adegan ditulis
-  dalam satu panggilan agar seluruh alur dirancang bersama. Naskah yang lebih panjang ditulis per babak, dengan
-  daftar poin yang sudah dibahas dan ±120 kata terakhir sebagai sambungan.
-- `narrationSplit.ts` memotong narasi tiap babak menjadi tepat sejumlah adegannya, di batas kalimat (atau koma
-  bila kalimatnya kurang), tanpa mengubah satu kata pun. Panjang adegan diratakan dengan partisi linear. Hook
-  menjadi awal narasi adegan pertama.
-- Catatan adegan (judul + satu kalimat tentang apa yang tampak di layar) ditulis per 40 adegan. Catatan ini
-  sumber rencana visual, jadi tidak boleh berisi kalimat seperti "narator menjelaskan…".
-- **Pemeriksaan**: satu panggilan mencari poin brief yang terlewat, adegan yang berulang, adegan yang keluar
-  arah, dan adegan yang hanya membahas topik dari luar. Paling banyak 8 adegan ditulis ulang lewat
-  `rewriteScene`, logika yang sama dengan revisi manual. Jika pemeriksaan gagal, naskah tetap disimpan.
+- `generateChapterPlan` membaca sinopsis asli, durasi, bahasa, dan resep gaya dalam satu panggilan LLM. Hasilnya
+  berisi judul, pertanyaan yang wajib terjawab, adegan pembuka, sifat isi, bab berisi ringkasan dan satu detail kunci,
+  penutup, hal yang dihindari, serta daftar fakta untuk dicek. Kreator dapat menyunting semua bagian itu di langkah Ide.
+- Jumlah bab mengikuti durasi: kira-kira 2 bab untuk 1 menit, 4 untuk 3 menit, 7 untuk 5 menit, dan 8 untuk 6 menit.
+  Hasil AI yang meleset sampai 2 bab tetap diterima. Total adegan sasaran (`clipCountFor`) dibagi ke semua bab lewat
+  `balanceActs`. Naskah ditulis dalam kelompok paling banyak 8 bab. Jumlah adegan pada kerangka adalah sasaran;
+  adegan final tetap dibagi di batas kalimat.
+- Gaya narasi dipilih di langkah Ide: Edukasi santai, Horor / cerita rakyat, Dokumenter, Cerita fiksi, atau Ikuti
+  contoh saya. Resep dan ambang pemeriksaan ada di `src/main/storyStyles.ts`. Contoh yang ditempel hanya dikirim ke
+  provider LLM terpilih untuk diekstrak menjadi aturan; yang disimpan di settings hanya nama dan aturan profil.
+  Penulisan berikutnya memakai aturan itu tanpa mengirim ulang teks contoh.
+- Kalimat pembuka sendiri bersifat opsional. Jika diisi, pembuka narasi harus dimulai dengan teks itu persis; jika
+  kosong, AI membuat pembuka dari adegan pembuka dan gaya terpilih. Judul bab hanya menjadi struktur dan tidak dibacakan.
+- Aturan kebenaran mengikuti sifat isi: fakta nyata tidak boleh mengarang nama, tanggal, atau angka; legenda dibingkai
+  sebagai cerita yang beredar tanpa menyalahkan kelompok nyata; fiksi diperlakukan sebagai fiksi. `factsToVerify`
+  tampil di langkah Naskah hanya untuk isi faktual.
+- **Narasi utuh dulu.** Tiap bab ditulis sebagai narasi satu kalimat per baris, dengan kalimat pendek yang mudah
+  dibacakan. `styleCheck.ts` memeriksa tiap bab:
+  - jumlah kata ragu;
+  - kalimat yang terlalu panjang;
+  - kata yang terlalu sering diulang. Batasnya dihitung per ±150 kata, dan kata dari judul, pertanyaan, judul bab,
+    serta detail kunci dikecualikan;
+  - sapaan "kamu", hanya di bab pembuka;
+  - baris yang berisi lebih dari satu kalimat. Masalah ini kecil, jadi tidak memicu penulisan ulang sendirian.
+
+  Hanya bab yang ditandai yang ditulis ulang. Hasil tulis ulang bab pembuka dibuang jika kalimat pembuka sendiri hilang.
+- `narrationSplit.ts` mengelompokkan kalimat utuh tanpa mengubah kata. Kalimat tidak dibelah untuk mengejar jumlah
+  adegan; bila sasaran tempo tidak cocok dengan batas kalimat, jumlah adegan boleh berbeda.
+- Catatan adegan (judul + satu kalimat tentang apa yang tampak di layar) ditulis per 40 adegan. Catatan menerima
+  sinopsis asli dan judul bab, lalu menjadi sumber rencana visual.
+- **Pemeriksaan kesetiaan** membaca sinopsis asli, pertanyaan, outline bab, detail kunci, penutup, hal yang dihindari,
+  dan daftar fakta. Paling banyak 8 adegan ditulis ulang lewat `rewriteScene`. Jika panggilan pemeriksaan gagal, naskah
+  tetap disimpan.
+- Proyek lama tetap bisa dibuka. Saat naskah ditulis, `normalizeStoryPlan` memetakan brief dan hook lama ke plan baru;
+  hook lama menjadi `customOpening`, dan gaya diturunkan dari brief (cerita rakyat → Horor, fiksi → Cerita fiksi,
+  dokumenter → Dokumenter, sisanya Edukasi santai). Brief lama tetap dipakai, tetapi sifat isi dan hal yang dihindari
+  mengikuti hasil editan di kerangka. Plan baru tidak menyimpan brief; brief diturunkan ulang dari kerangka setiap kali
+  naskah ditulis. Tidak ada migrasi database.
 - Panjang narasi mengikuti jatah durasi adegan. Narasi boleh memakai tag ekspresi berbahasa Inggris (`<short pause>`,
   `<long pause>`, `<chuckles>`, `<sigh>`, `<gasp>`, `<whispers>`), paling banyak satu per 40 kata. Daftar tag: `VOICE_TAGS` di `shared/speech.ts`.
 - Hasil disimpan dengan `replaceScript`. Durasi awal tiap klip diperkirakan dari jumlah kata

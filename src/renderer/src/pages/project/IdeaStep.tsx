@@ -4,7 +4,8 @@ import { getFlow2ApiModel } from '@shared/flow2api-catalog'
 import { getImageModel } from '@shared/higgsfield'
 import { DURATIONS, LANGUAGES, clipCountFor, llmName } from '@shared/models'
 import { getStyle } from '@shared/styles'
-import type { AppSettings, KeyStatus, LlmProvider, StoryBrief, StoryFactMode, StoryFormat, StoryPlan, TtsProvider, VoiceOption } from '@shared/types'
+import { STORY_STYLE_OPTIONS } from '@shared/storyStyles'
+import type { AppSettings, KeyStatus, LlmProvider, StoryFactMode, StoryPlan, StoryStyleId, TtsProvider, VoiceOption } from '@shared/types'
 import { Select } from '../../components/Select'
 import { StylePicker } from '../../components/StylePicker'
 import { Button, Chip, Field, Segmented, confirmDialog, cx } from '../../components/ui'
@@ -103,14 +104,6 @@ function VoicePicker({ provider, value, onChange }: { provider: TtsProvider; val
   )
 }
 
-const FORMAT_OPTIONS: { value: StoryFormat; label: string }[] = [
-  { value: 'story', label: 'Cerita' },
-  { value: 'list', label: 'Daftar / ragam' },
-  { value: 'explainer', label: 'Penjelasan' },
-  { value: 'documentary', label: 'Dokumenter' },
-  { value: 'factcheck', label: 'Cek fakta' }
-]
-
 const FACT_OPTIONS: { value: StoryFactMode; label: string }[] = [
   { value: 'factual', label: 'Fakta nyata' },
   { value: 'folklore', label: 'Cerita rakyat / horor' },
@@ -128,8 +121,10 @@ export function IdeaStep() {
   const [settings, setSettings] = useState<AppSettings | null>(null)
   const [writer, setWriter] = useState<{ provider: LlmProvider; model: string } | null>(null)
   const [keys, setKeys] = useState<KeyStatus[]>([])
+  const [profileName, setProfileName] = useState('')
+  const [profileExamples, setProfileExamples] = useState('')
+  const [creatingProfile, setCreatingProfile] = useState(false)
   const storyPlan = project?.storyPlan ?? null
-  const hookMode = storyPlan?.hookMode ?? 'automatic'
 
   useEffect(() => {
     void window.api.settings.get().then((s) => {
@@ -165,47 +160,29 @@ export function IdeaStep() {
     settings?.defaultVisualProvider === 'flow2api'
       ? getFlow2ApiModel(settings?.flow2apiImageModel, 'image').name
       : getImageModel(project.imageModel).name
-  const hasHook = !!storyPlan?.hook.trim()
-  const hasOutline = !!storyPlan?.acts.length
-  const brief = storyPlan?.brief ?? null
-  // Plans saved before briefs existed may already have a hook; those continue and get a brief at script time.
-  const needsBrief = !brief && !hasHook
-  const actionLabel = hasOutline ? (clips.length ? 'Susun ulang naskah' : 'Buat naskah') : hasHook ? 'Susun kerangka cerita' : needsBrief ? 'Pahami idenya' : hookMode === 'manual' ? 'Isi hook untuk lanjut' : storyPlan?.hookOptions.length ? 'Pilih hook untuk lanjut' : 'Buat pilihan hook'
-  const actionDisabled =
-    !!busy ||
-    (!hasOutline && !needsBrief && hookMode === 'manual' && !hasHook) ||
-    (!hasOutline && !needsBrief && hookMode === 'automatic' && !!storyPlan?.hookOptions.length && !hasHook)
+  const hasPlan = !!storyPlan?.acts.length
+  const profiles = settings?.storyStyleProfiles ?? []
+  const style = storyPlan?.style ?? 'casual-education'
+  const customOpening = storyPlan?.customOpening ?? storyPlan?.hook ?? ''
+  const profileId = storyPlan?.styleProfileId ?? profiles[0]?.id ?? ''
+  const selectedProfile = profiles.find((profile) => profile.id === profileId)
+  const actionLabel = hasPlan ? (clips.length ? 'Susun ulang naskah' : 'Buat naskah') : 'Buat kerangka bab'
+  const actionDisabled = !!busy || !project.synopsis.trim() || (style === 'custom-example' && profiles.length === 0)
 
   const updateStoryPlan = (patch: Partial<StoryPlan>): void => {
     if (!project) return
-    const current: StoryPlan = project.storyPlan ?? { hookMode: 'automatic', hookOptions: [], hook: '', title: '', acts: [] }
+    const current: StoryPlan = project.storyPlan ?? { hookMode: 'automatic', hookOptions: [], hook: '', title: '', acts: [], style: 'casual-education', question: '', opening: '', customOpening: '', closing: '', avoid: [], factMode: 'factual', factsToVerify: [] }
     updateProject({ storyPlan: { ...current, ...patch } })
   }
 
-  const chooseHookMode = (mode: StoryPlan['hookMode']): void => {
-    const current = project.storyPlan ?? { hookMode: mode, hookOptions: [], hook: '', title: '', acts: [] }
-    updateProject({ storyPlan: { ...current, hookMode: mode, hookOptions: mode === 'manual' ? [] : current.hookOptions, hook: mode === 'manual' ? current.hook : '' , acts: [] } })
-  }
-
-  // A changed brief makes the outline stale, but the hooks may still fit, so only the acts are cleared.
-  const updateBrief = (patch: Partial<StoryBrief>): void => {
-    if (!brief) return
-    updateStoryPlan({ brief: { ...brief, ...patch }, acts: [] })
-  }
-
-  const makeBrief = async (): Promise<void> => {
-    if (!project.synopsis.trim()) {
-      toast('error', 'Tulis ide cerita atau sinopsis dulu.')
-      return
-    }
+  const makeChapterPlan = async (): Promise<void> => {
     setBusy(true)
-    setPlanMessage('Memahami idemu…')
+    setPlanMessage('Menyusun kerangka bab…')
     try {
       await flush()
-      const next = await window.api.story.brief(project.id)
-      const keepHook = hookMode === 'manual' ? project.storyPlan?.hook ?? '' : ''
-      updateProject({ storyPlan: { hookMode, hookOptions: [], hook: keepHook, title: '', acts: [], brief: next } })
-      toast('success', 'Arah cerita siap. Periksa poin yang wajib dibahas, lalu lanjut ke hook.')
+      const plan = await window.api.story.chapterPlan(project.id, style as StoryStyleId, customOpening)
+      updateProject({ storyPlan: { ...plan, styleProfileId: style === 'custom-example' ? profileId : undefined } })
+      toast('success', 'Kerangka bab siap ditinjau. Rapikan isinya sebelum naskah ditulis.')
     } catch (e) {
       toast('error', errorText(e))
     } finally {
@@ -214,50 +191,48 @@ export function IdeaStep() {
     }
   }
 
-  const makeHooks = async (): Promise<void> => {
-    if (!project.synopsis.trim()) {
-      toast('error', 'Tulis ide cerita atau sinopsis dulu.')
-      return
-    }
-    setBusy(true)
-    setPlanMessage('Mencari pilihan hook…')
+  const makeStyleProfile = async (): Promise<void> => {
+    if (!profileExamples.trim()) return
+    setCreatingProfile(true)
     try {
-      await flush()
-      const hookOptions = await window.api.story.hooks(project.id, brief ?? undefined)
-      // No hook is preselected: the first option used to slip through unread and set the whole video's direction.
-      updateProject({ storyPlan: { hookMode: 'automatic', hookOptions, hook: '', title: '', acts: [], brief: brief ?? undefined } })
-      toast('success', 'Tiga pilihan hook siap. Pilih atau edit salah satunya dulu.')
+      const profile = await window.api.story.styleProfile(project.id, profileName, profileExamples)
+      const nextSettings = await window.api.settings.get()
+      setSettings(nextSettings)
+      updateStoryPlan({ style: 'custom-example', styleProfileId: profile.id })
+      setProfileExamples('')
+      toast('success', 'Profil gaya tersimpan. Contoh hanya dianalisis untuk membuat aturan gaya.')
     } catch (e) {
       toast('error', errorText(e))
     } finally {
-      setBusy(false)
-      setPlanMessage('')
+      setCreatingProfile(false)
     }
   }
 
-  const makeOutline = async (): Promise<void> => {
-    if (!storyPlan?.hook.trim()) {
-      toast('error', 'Pilih atau tulis hook dulu.')
-      return
-    }
-    setBusy(true)
-    setPlanMessage('Menyusun kerangka cerita…')
-    try {
-      await flush()
-      const outline = await window.api.story.outline(project.id, storyPlan.hook, brief ?? undefined)
-      updateProject({ storyPlan: outline })
-      toast('success', 'Kerangka siap ditinjau. Kamu bisa mengubah judul dan ringkasan tiap babak.')
-    } catch (e) {
-      toast('error', errorText(e))
-    } finally {
-      setBusy(false)
-      setPlanMessage('')
-    }
+  const saveProfileGuidance = async (guidance: string): Promise<void> => {
+    if (!settings || !selectedProfile) return
+    const storyStyleProfiles = profiles.map((profile) => profile.id === selectedProfile.id ? { ...profile, guidance } : profile)
+    const next = await window.api.settings.set({ storyStyleProfiles })
+    setSettings(next)
+  }
+
+  const deleteProfile = async (): Promise<void> => {
+    if (!settings || !selectedProfile) return
+    const ok = await confirmDialog({
+      title: `Hapus profil “${selectedProfile.name}”?`,
+      body: 'Aturan gaya ini akan dihapus dari pengaturan. Contoh narasi asalnya memang tidak disimpan.',
+      confirm: 'Hapus profil',
+      danger: true
+    })
+    if (!ok) return
+    const storyStyleProfiles = profiles.filter((profile) => profile.id !== selectedProfile.id)
+    setSettings(await window.api.settings.set({ storyStyleProfiles }))
+    if (storyStyleProfiles.length) updateStoryPlan({ styleProfileId: storyStyleProfiles[0].id })
+    else updateStoryPlan({ style: 'casual-education', styleProfileId: undefined })
   }
 
   const compose = async (): Promise<void> => {
-    if (!project.storyPlan?.hook.trim() || !project.storyPlan.acts.length) {
-      toast('error', 'Pilih hook dan susun kerangka cerita dulu.')
+    if (!project.storyPlan?.acts.length) {
+      toast('error', 'Susun kerangka bab dulu.')
       return
     }
     if (clips.length) {
@@ -315,173 +290,139 @@ export function IdeaStep() {
               </div>
             </div>
 
-            {brief && (
+            <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-5">
+              <div>
+                <h2 className="font-display text-xl font-bold">Gaya narasi</h2>
+                <p className="mt-1 text-[13px] text-ink-2">Pilih cara bercerita. AI menyusun kerangka langsung dari ide kamu.</p>
+              </div>
+              <Field label="Gaya bercerita">
+                <Select
+                  label="Gaya bercerita"
+                  value={style}
+                  onChange={(value) => updateStoryPlan({ style: value as StoryStyleId, acts: [] })}
+                  options={STORY_STYLE_OPTIONS}
+                />
+              </Field>
+              <label className="flex flex-col gap-1">
+                <span className="text-xs font-semibold text-ink-2">Kalimat pembuka sendiri (opsional)</span>
+                <textarea
+                  rows={2}
+                  maxLength={500}
+                  value={customOpening}
+                  onChange={(event) => updateStoryPlan({ customOpening: event.target.value })}
+                  placeholder="Kosongkan agar AI memilih pembuka yang cocok dengan ide dan gaya narasi."
+                  className="resize-y rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm leading-relaxed outline-none focus:border-ink-2"
+                />
+              </label>
+              {style === 'custom-example' && (
+                <div className="flex flex-col gap-3 rounded-xl border border-line-2 bg-paper p-4">
+                  {profiles.length > 0 && (
+                    <>
+                      <div className="flex items-end gap-2">
+                        <Field label="Profil gaya">
+                          <Select label="Profil gaya" value={profileId} onChange={(value) => updateStoryPlan({ styleProfileId: value, acts: [] })} options={profiles.map((profile) => ({ value: profile.id, label: profile.name }))} />
+                        </Field>
+                        <Button size="sm" variant="secondary" onClick={() => void deleteProfile()}>Hapus profil</Button>
+                      </div>
+                      {selectedProfile && (
+                        <label className="flex flex-col gap-1">
+                          <span className="text-xs font-semibold text-ink-2">Aturan gaya — boleh kamu edit</span>
+                          <textarea
+                            rows={5}
+                            value={selectedProfile.guidance}
+                            onChange={(event) => {
+                              const guidance = event.target.value
+                              setSettings({ ...settings!, storyStyleProfiles: profiles.map((profile) => profile.id === selectedProfile.id ? { ...profile, guidance } : profile) })
+                            }}
+                            onBlur={(event) => void saveProfileGuidance(event.target.value)}
+                            className="resize-y rounded-lg border border-line-2 bg-surface px-3 py-2 text-sm leading-relaxed outline-none focus:border-ink-2"
+                          />
+                        </label>
+                      )}
+                    </>
+                  )}
+                  <label className="flex flex-col gap-1">
+                    <span className="text-xs font-semibold text-ink-2">{profiles.length ? 'Buat profil lain dari contoh' : 'Buat profil dari contoh narasi favorit'}</span>
+                    <input value={profileName} onChange={(event) => setProfileName(event.target.value)} placeholder="Nama profil, misalnya Gaya channel saya" className="rounded-lg border border-line-2 bg-surface px-3 py-2 text-sm outline-none focus:border-ink-2" />
+                    <textarea
+                      rows={5}
+                      maxLength={30000}
+                      value={profileExamples}
+                      onChange={(event) => setProfileExamples(event.target.value)}
+                      placeholder="Tempel satu atau beberapa contoh narasi (minimal 300 karakter). Contoh dikirim ke penyedia AI yang kamu pilih untuk dianalisis. Yang disimpan hanya aturan gaya, bukan teks contoh."
+                      className="resize-y rounded-lg border border-line-2 bg-surface px-3 py-2 text-sm leading-relaxed outline-none focus:border-ink-2"
+                    />
+                  </label>
+                  <Button size="sm" variant="secondary" loading={creatingProfile} disabled={!profileName.trim() || profileExamples.trim().length < 300} onClick={() => void makeStyleProfile()}>
+                    Buat dan simpan profil gaya
+                  </Button>
+                </div>
+              )}
+            </section>
+
+            {hasPlan && (
               <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-5">
                 <div className="flex flex-wrap items-start justify-between gap-3">
                   <div>
-                    <h2 className="font-display text-xl font-bold">Arah cerita</h2>
-                    <p className="mt-1 text-[13px] text-ink-2">
-                      Begini AI memahami idemu. Hook, kerangka, dan naskah akan mengikuti arah ini, jadi rapikan dulu kalau ada yang meleset.
-                    </p>
+                    <h2 className="font-display text-xl font-bold">Kerangka bab</h2>
+                    <p className="mt-1 text-[13px] text-ink-2">Tinjau pertanyaan, pembuka, detail kunci, dan penutup. Judul bab menjadi struktur narasi, tidak dibacakan.</p>
                   </div>
-                  <button type="button" onClick={() => void makeBrief()} disabled={busy} className="shrink-0 text-[13px] font-semibold text-accent-dark hover:underline disabled:opacity-50">
-                    Baca ulang ide
+                  <button type="button" onClick={() => void makeChapterPlan()} disabled={busy} className="shrink-0 text-[13px] font-semibold text-accent-dark hover:underline disabled:opacity-50">
+                    Buat ulang kerangka
                   </button>
                 </div>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-semibold text-ink-2">Judul video</span>
+                  <input value={storyPlan?.title ?? ''} onChange={(event) => updateStoryPlan({ title: event.target.value })} className="rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm outline-none focus:border-ink-2" />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-semibold text-ink-2">Pertanyaan yang wajib terjawab</span>
+                  <textarea rows={2} value={storyPlan?.question ?? ''} onChange={(event) => updateStoryPlan({ question: event.target.value })} className="resize-y rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm leading-relaxed outline-none focus:border-ink-2" />
+                </label>
+                <label className="flex flex-col gap-1">
+                  <span className="text-xs font-semibold text-ink-2">Adegan pembuka</span>
+                  <textarea rows={2} value={storyPlan?.opening ?? ''} onChange={(event) => updateStoryPlan({ opening: event.target.value })} className="resize-y rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm leading-relaxed outline-none focus:border-ink-2" />
+                </label>
                 <div className="grid grid-cols-2 gap-3">
-                  <Field label="Bentuk video">
-                    <Select label="Bentuk video" value={brief.format} onChange={(v) => updateBrief({ format: v })} options={FORMAT_OPTIONS} />
-                  </Field>
                   <Field label="Sifat isi">
-                    <Select label="Sifat isi" value={brief.factMode} onChange={(v) => updateBrief({ factMode: v })} options={FACT_OPTIONS} />
+                    <Select label="Sifat isi" value={storyPlan?.factMode ?? 'factual'} onChange={(value) => updateStoryPlan({ factMode: value as StoryFactMode })} options={FACT_OPTIONS} />
                   </Field>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
                   <label className="flex flex-col gap-1">
-                    <span className="text-xs font-semibold text-ink-2">Suasana</span>
-                    <input
-                      value={brief.tone}
-                      onChange={(e) => updateBrief({ tone: e.target.value })}
-                      className="rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm outline-none focus:border-ink-2"
-                    />
-                  </label>
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs font-semibold text-ink-2">Sudut pandang narator</span>
-                    <input
-                      value={brief.angle}
-                      onChange={(e) => updateBrief({ angle: e.target.value })}
-                      className="rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm outline-none focus:border-ink-2"
-                    />
+                    <span className="text-xs font-semibold text-ink-2">Fakta untuk dicek (satu per baris)</span>
+                    <textarea rows={2} value={(storyPlan?.factsToVerify ?? []).join('\n')} onChange={(event) => updateStoryPlan({ factsToVerify: linesOf(event.target.value) })} className="resize-y rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm leading-relaxed outline-none focus:border-ink-2" />
                   </label>
                 </div>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs font-semibold text-ink-2">Wajib dibahas (satu poin per baris)</span>
-                  <textarea
-                    rows={Math.min(8, Math.max(3, brief.mustCover.length))}
-                    value={brief.mustCover.join('\n')}
-                    onChange={(e) => updateBrief({ mustCover: linesOf(e.target.value) })}
-                    className="resize-y rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm leading-relaxed outline-none focus:border-ink-2"
-                  />
+                  <span className="text-xs font-semibold text-ink-2">Penutup</span>
+                  <textarea rows={2} value={storyPlan?.closing ?? ''} onChange={(event) => updateStoryPlan({ closing: event.target.value })} className="resize-y rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm leading-relaxed outline-none focus:border-ink-2" />
                 </label>
                 <label className="flex flex-col gap-1">
-                  <span className="text-xs font-semibold text-ink-2">Hindari (satu poin per baris, boleh kosong)</span>
-                  <textarea
-                    rows={2}
-                    value={brief.avoid.join('\n')}
-                    onChange={(e) => updateBrief({ avoid: linesOf(e.target.value) })}
-                    className="resize-y rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm leading-relaxed outline-none focus:border-ink-2"
-                  />
+                  <span className="text-xs font-semibold text-ink-2">Hindari (satu poin per baris)</span>
+                  <textarea rows={2} value={(storyPlan?.avoid ?? []).join('\n')} onChange={(event) => updateStoryPlan({ avoid: linesOf(event.target.value) })} className="resize-y rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm leading-relaxed outline-none focus:border-ink-2" />
                 </label>
+                <div className="grid gap-2 sm:grid-cols-2">
+                  {storyPlan?.acts.map((act, index) => (
+                    <div key={index} className="flex flex-col gap-2 rounded-xl border border-line-2 bg-paper p-3.5">
+                      <div className="flex items-center gap-2">
+                        <span className="grid size-6 shrink-0 place-items-center rounded-full bg-ink text-xs font-semibold text-paper">{index + 1}</span>
+                        <input aria-label={`Judul bab ${index + 1}`} value={act.title} onChange={(event) => updateStoryPlan({ acts: storyPlan.acts.map((item, i) => i === index ? { ...item, title: event.target.value } : item) })} className="min-w-0 flex-1 bg-transparent text-sm font-semibold outline-none" />
+                        <span className="shrink-0 text-[11px] text-muted">±{act.scenes} adegan</span>
+                      </div>
+                      <textarea aria-label={`Isi bab ${index + 1}`} rows={3} value={act.summary} onChange={(event) => updateStoryPlan({ acts: storyPlan.acts.map((item, i) => i === index ? { ...item, summary: event.target.value } : item) })} className="resize-y rounded-lg bg-transparent text-[13px] leading-relaxed text-ink-2 outline-none" />
+                      <label className="flex flex-col gap-1 border-t border-line pt-2">
+                        <span className="text-[11px] font-semibold text-muted">Satu detail kunci</span>
+                        <textarea aria-label={`Detail kunci bab ${index + 1}`} rows={2} value={act.keyDetail ?? act.beats?.[0] ?? ''} onChange={(event) => updateStoryPlan({ acts: storyPlan.acts.map((item, i) => i === index ? { ...item, keyDetail: event.target.value } : item) })} className="resize-y rounded-lg bg-transparent text-[13px] leading-relaxed text-ink-2 outline-none" />
+                      </label>
+                    </div>
+                  ))}
+                </div>
               </section>
             )}
-
-            {(brief || hasHook) && (
-            <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-5">
-              <div className="flex flex-wrap items-start justify-between gap-3">
-                <div>
-                  <h2 className="font-display text-xl font-bold">Hook pembuka</h2>
-                  <p className="mt-1 text-[13px] text-ink-2">Pilih pembuka yang ingin dijanjikan ceritamu. Narasi akan dibangun untuk memenuhi hook ini.</p>
-                </div>
-                <Segmented
-                  value={hookMode}
-                  onChange={(v) => chooseHookMode(v as StoryPlan['hookMode'])}
-                  options={[{ id: 'automatic', label: 'Buatkan hook' }, { id: 'manual', label: 'Tulis sendiri' }]}
-                />
-              </div>
-              {hookMode === 'automatic' && storyPlan?.hookOptions.length ? (
-                <div className="flex flex-col gap-2">
-                  {storyPlan.hookOptions.map((hook, i) => (
-                    <button
-                      key={`${i}-${hook}`}
-                      type="button"
-                      aria-pressed={storyPlan.hook === hook}
-                      onClick={() => updateStoryPlan({ hook, acts: [] })}
-                      className={cx(
-                        'rounded-xl border px-4 py-3 text-left text-sm leading-relaxed transition-colors',
-                        storyPlan.hook === hook ? 'border-accent bg-accent-soft text-ink' : 'border-line-2 bg-paper text-ink-2 hover:border-ink-2'
-                      )}
-                    >
-                      <span className="mr-2 font-mono text-xs font-semibold text-accent-dark">{i + 1}</span>{hook}
-                    </button>
-                  ))}
-                  <button type="button" onClick={() => void makeHooks()} disabled={busy} className="self-start text-[13px] font-semibold text-accent-dark hover:underline">
-                    Buat pilihan lain
-                  </button>
-                </div>
-              ) : null}
-              <textarea
-                aria-label="Teks hook pembuka"
-                rows={2}
-                maxLength={500}
-                value={storyPlan?.hook ?? ''}
-                onChange={(e) => updateStoryPlan({ hook: e.target.value, acts: [] })}
-                placeholder={hookMode === 'automatic' ? 'Klik “Buatkan hook” untuk melihat tiga pilihan.' : 'Tulis kalimat pembuka ceritamu…'}
-                className="w-full resize-y rounded-xl border border-line-2 bg-paper px-3.5 py-3 text-sm leading-relaxed outline-none focus:border-ink-2"
-              />
-              {storyPlan?.acts.length ? (
-                <section className="flex flex-col gap-3 border-t border-line pt-4">
-                  <div className="flex items-start justify-between gap-3">
-                    <div>
-                      <h3 className="font-display text-lg font-bold">Kerangka cerita</h3>
-                      <p className="mt-1 text-[13px] text-ink-2">Tinjau alur dan edit ringkasannya sebelum naskah lengkap ditulis.</p>
-                    </div>
-                    <button type="button" onClick={() => void makeOutline()} disabled={busy || !storyPlan.hook.trim()} className="shrink-0 text-[13px] font-semibold text-accent-dark hover:underline disabled:opacity-50">
-                      Susun ulang
-                    </button>
-                  </div>
-                  <label className="flex flex-col gap-1">
-                    <span className="text-xs font-semibold text-ink-2">Judul sementara</span>
-                    <input
-                      value={storyPlan.title}
-                      onChange={(e) => updateStoryPlan({ title: e.target.value })}
-                      className="rounded-lg border border-line-2 bg-paper px-3 py-2 text-sm outline-none focus:border-ink-2"
-                    />
-                  </label>
-                  <div className="grid gap-2 sm:grid-cols-2">
-                    {storyPlan.acts.map((act, i) => (
-                      <div key={i} className="flex flex-col gap-2 rounded-xl border border-line-2 bg-paper p-3.5">
-                        <div className="flex items-center gap-2">
-                          <span className="grid size-6 shrink-0 place-items-center rounded-full bg-ink text-xs font-semibold text-paper">{i + 1}</span>
-                          <input
-                            aria-label={`Judul babak ${i + 1}`}
-                            value={act.title}
-                            onChange={(e) => updateStoryPlan({ acts: storyPlan.acts.map((a, n) => n === i ? { ...a, title: e.target.value } : a) })}
-                            className="min-w-0 flex-1 bg-transparent text-sm font-semibold outline-none"
-                          />
-                          <span className="shrink-0 text-[11px] text-muted">{act.scenes} adegan</span>
-                        </div>
-                        <textarea
-                          aria-label={`Ringkasan babak ${i + 1}`}
-                          rows={3}
-                          value={act.summary}
-                          onChange={(e) => updateStoryPlan({ acts: storyPlan.acts.map((a, n) => n === i ? { ...a, summary: e.target.value } : a) })}
-                          className="resize-y rounded-lg bg-transparent text-[13px] leading-relaxed text-ink-2 outline-none"
-                        />
-                        {act.beats && (
-                          <label className="flex flex-col gap-1 border-t border-line pt-2">
-                            <span className="text-[11px] font-semibold text-muted">Poin di babak ini</span>
-                            <textarea
-                              aria-label={`Poin babak ${i + 1}`}
-                              rows={Math.min(5, Math.max(2, act.beats.length))}
-                              value={act.beats.join('\n')}
-                              onChange={(e) => updateStoryPlan({ acts: storyPlan.acts.map((a, n) => (n === i ? { ...a, beats: linesOf(e.target.value) } : a)) })}
-                              className="resize-y rounded-lg bg-transparent text-[13px] leading-relaxed text-ink-2 outline-none"
-                            />
-                          </label>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                </section>
-              ) : null}
-            </section>
-            )}
-
             <div className="flex flex-col gap-2">
               <span className="text-sm font-semibold">Durasi video</span>
               <div className="flex flex-wrap gap-2">
                 {DURATIONS.map((d) => (
-                  <Chip key={d.sec} on={project.durationSec === d.sec} onClick={() => updateProject({ durationSec: d.sec, storyPlan: null })} className="h-10 px-4">
+                  <Chip key={d.sec} on={project.durationSec === d.sec} onClick={() => updateProject({ durationSec: d.sec, storyPlan: storyPlan ? { ...storyPlan, acts: [] } : null })} className="h-10 px-4">
                     {d.label}
                   </Chip>
                 ))}
@@ -613,7 +554,7 @@ export function IdeaStep() {
           disabled={actionDisabled}
           loading={busy}
           icon={!busy && <Sparkles className="size-[18px]" />}
-          onClick={() => void (hasOutline ? compose() : hasHook ? makeOutline() : needsBrief ? makeBrief() : makeHooks())}
+          onClick={() => void (hasPlan ? compose() : makeChapterPlan())}
         >
           {busy ? planMessage || 'Menyiapkan…' : actionLabel}
         </Button>

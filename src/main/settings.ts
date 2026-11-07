@@ -21,7 +21,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   flow2apiVideoModel: 'veo-3.1-fast-i2v',
   higgsfieldConcurrency: 3,
   flow2apiConcurrency: 2,
-  imageGenerationMode: 'final'
+  imageGenerationMode: 'final',
+  storyStyleProfiles: []
 }
 
 const clampConcurrency = (value: unknown, max: number, fallback: number): number =>
@@ -50,6 +51,10 @@ export function getSettings(): AppSettings {
   if (out.theme !== 'light' && out.theme !== 'dark' && out.theme !== 'system') {
     out.theme = 'system'
   }
+  // Profiles are written from the renderer too; a malformed entry must not break the Idea step or script writing.
+  out.storyStyleProfiles = Array.isArray(out.storyStyleProfiles)
+    ? out.storyStyleProfiles.filter((p) => p && typeof p.id === 'string' && typeof p.name === 'string' && typeof p.guidance === 'string')
+    : []
   return out
 }
 

@@ -313,6 +313,16 @@ export function ScriptStep() {
             </div>
           )}
 
+          {project.storyPlan?.factMode === 'factual' && !!project.storyPlan.factsToVerify?.length && (
+            <section className="flex flex-col gap-2 rounded-xl border border-sun-ink/20 bg-sun-soft px-4 py-3 text-[13px] text-sun-ink">
+              <h2 className="font-semibold">Fakta yang perlu kamu cek</h2>
+              <p>Periksa nama, tahun, dan angka ini sebelum menerbitkan video.</p>
+              <ul className="list-disc pl-5">
+                {project.storyPlan.factsToVerify.map((fact, index) => <li key={`${index}-${fact}`}>{fact}</li>)}
+              </ul>
+            </section>
+          )}
+
           <div className="flex flex-col">
             {clips.map((c, i) => (
               <div key={c.id}>

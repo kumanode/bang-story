@@ -192,6 +192,16 @@ export interface StoryAct {
   scenes: number
   /** Brief points this act is responsible for; optional because plans saved before briefs have none. */
   beats?: string[]
+  keyDetail?: string
+}
+
+export type StoryStyleId = 'casual-education' | 'horror-folklore' | 'documentary' | 'fiction' | 'custom-example'
+
+export interface StoryStyleProfile {
+  id: string
+  name: string
+  guidance: string
+  createdAt: number
 }
 
 export type StoryFormat = 'story' | 'list' | 'explainer' | 'documentary' | 'factcheck'
@@ -216,6 +226,16 @@ export interface StoryPlan {
   acts: StoryAct[]
   /** Optional so plans saved before briefs existed still load; the script step creates one when missing. */
   brief?: StoryBrief
+  /** New story flow fields; optional so plans saved by older builds remain readable. */
+  style?: StoryStyleId
+  styleProfileId?: string
+  question?: string
+  opening?: string
+  customOpening?: string
+  closing?: string
+  avoid?: string[]
+  factMode?: StoryFactMode
+  factsToVerify?: string[]
 }
 
 export interface Character {
@@ -418,6 +438,7 @@ export interface AppSettings {
   flow2apiConcurrency: number
   /** Draft selects the lowest resolution supported by a Higgsfield image model. */
   imageGenerationMode: 'draft' | 'final'
+  storyStyleProfiles: StoryStyleProfile[]
 }
 
 /** What one Higgsfield request would cost, from the API's estimate endpoint. */

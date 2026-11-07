@@ -9,6 +9,8 @@ Cara menaikkan versi ada di [docs/pengembangan.md](docs/pengembangan.md#versi-da
 ## [Belum dirilis]
 
 ### Ditambahkan
+- Pemilih gaya narasi dan editor Kerangka Bab langsung dari sinopsis, dengan profil gaya yang dapat dibuat dari contoh favorit.
+- Pemeriksaan gaya per bab, daftar fakta untuk dicek pada naskah faktual, dan penulisan ulang terbatas pada bab/adegan yang ditandai.
 - Pembicara karakter per adegan dengan fallback ke narator bila provider TTS berbeda.
 - Track SFX dengan impor file drag & drop, pemotongan awal/akhir, volume per efek, snap, dan seleksi hapus.
 - Generator tiga variasi thumbnail 16:9 dari prompt konsep YouTube.

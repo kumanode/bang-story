@@ -150,10 +150,21 @@ jendela tersambung tanpa celah.
 Klip dengan `meta.editedWords` dilewati saat sinkron caption biasa. UI menunjukkan jumlah klip yang dilindungi;
 aksi paksa meminta konfirmasi dan menghapus penanda edit manual sebelum menulis kata hasil sinkron.
 
-### Hook disetujui sebelum naskah penuh
+### Alur hook lama dipertahankan untuk proyek tersimpan
 Hook adalah janji cerita, bukan kalimat promosi yang berdiri sendiri. Kreator memilih atau menulis hook terlebih
 dahulu, meninjau kerangka babak yang menjawabnya, lalu naskah dibuat dari kerangka itu. Revisi adegan membawa hook
 dan konteks tetangganya agar perubahan lokal tetap cocok dengan alur utama.
+
+### Kerangka bab baru membaca sinopsis langsung
+Untuk proyek baru, satu permintaan LLM menghasilkan pertanyaan, pembuka, isi bab, detail kunci, penutup, hal yang
+dihindari, sifat isi, dan fakta yang perlu dicek. Tahap brief dan hook yang terpisah berulang kali meringkas sinopsis
+dan dapat menggeser maksud kreator. Plan lama tidak dimigrasikan; brief dan hook lama dinormalisasi saat penulisan,
+dengan hook lama menjadi kalimat pembuka yang dipertahankan.
+
+### Profil gaya menyimpan aturan, bukan contoh
+Contoh narasi dikirim sekali ke LLM untuk diringkas menjadi aturan ritme dan teknik. Hanya aturan serta nama profil yang
+disimpan di settings. Prompt naskah berikutnya memakai aturan hasil ekstraksi, bukan kalimat contoh, agar isi contoh
+tidak terbawa atau disalin ke cerita lain.
 
 ### Adegan mengikuti kalimat utuh
 Jumlah adegan dalam outline adalah sasaran tempo. Narasi satu rekaman dipotong pada batas kalimat dan kalimat panjang

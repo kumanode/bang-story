@@ -23,6 +23,8 @@ import type {
   ProjectSummary,
   StoryBrief,
   StoryPlan,
+  StoryStyleId,
+  StoryStyleProfile,
   TtsProvider,
   ThumbnailConcept,
   ThumbnailRequest,
@@ -41,6 +43,10 @@ export interface StudioApi {
     duplicate(id: string): Promise<ProjectSummary>
   }
   story: {
+    /** Builds the complete editable chapter plan in one LLM request. */
+    chapterPlan(projectId: string, style: StoryStyleId, customOpening?: string): Promise<StoryPlan>
+    /** Extracts reusable style rules from creator supplied narration examples and stores the profile in settings. */
+    styleProfile(projectId: string, name: string, examples: string): Promise<StoryStyleProfile>
     /** Reads the idea into an editable brief (format, truth mode, must-cover points) that later steps follow. */
     brief(projectId: string): Promise<StoryBrief>
     /** Creates hook options that fit the brief; without one, the main process creates it first. */

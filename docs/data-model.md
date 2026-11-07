@@ -46,7 +46,7 @@ menjalankannya.
 | Properti | Arti |
 |---|---|
 | `title`, `synopsis` | judul (diisi AI saat menulis naskah) dan ide cerita |
-| `storyPlan` | hook terpilih, opsi hook otomatis, judul sementara, dan kerangka babak (beserta `beats`), serta `brief` (bentuk video, sifat isi, poin wajib dibahas) yang bisa ditinjau sebelum naskah dibuat; disimpan sebagai JSON di `story_plan_json` |
+| `storyPlan` | plan cerita JSON sebelum naskah dibuat: gaya narasi, judul, pertanyaan, pembuka, bab (ringkasan, detail kunci, `beats`, sasaran adegan), penutup, hal yang dihindari, sifat isi, serta fakta untuk dicek. Field baru bersifat opsional agar plan lama (`hook` + `brief` + babak) tetap terbaca; dinormalisasi saat naskah dibuat. |
 | `durationSec`, `language`, `aspectRatio` | target durasi, bahasa naskah/suara, `16:9` atau `9:16` |
 | `styleId` | gaya visual (`src/shared/styles.ts`, 24 gaya) |
 | `ttsProvider`, `ttsVoice` | `gemini` atau `elevenlabs` + ID suara |
@@ -144,7 +144,8 @@ Saat `duplicateProject()` menyalin `editor_json`, remap semua ID aset dan klip: 
 
 `defaultTtsProvider`, `defaultLanguage`, `exportFolder`, `llmProvider`, `llmModels` (model per penyedia LLM),
 `customBaseUrl`, `geminiTtsModel`, `elevenModel`, `imageModel`, `videoModel` (bawaan untuk proyek baru),
-`whisperAuto` (sinkron caption otomatis setelah narasi Gemini).
+`whisperAuto` (sinkron caption otomatis setelah narasi Gemini), `storyStyleProfiles` (nama, aturan gaya, dan waktu
+pembuatan; teks contoh narasi tidak disimpan).
 
 Kunci baru harus ada di `DEFAULT_SETTINGS` (`src/main/settings.ts`); kunci yang tidak dikenal diabaikan saat
 disimpan.
