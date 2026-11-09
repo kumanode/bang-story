@@ -55,7 +55,11 @@ function release(q: QueueName): void {
   if (running[q] < limit) waiting[q].shift()?.()
 }
 
-export function runJob(job: Job, queue: QueueName, task: Task): Job {
+/**
+ * Runs a job in its queue. `beforeQueue` runs first, without holding a queue slot, for waits on other
+ * work (such as a voice-over the job needs) that should not block unrelated jobs in the same queue.
+ */
+export function runJob(job: Job, queue: QueueName, task: Task, beforeQueue?: (ctx: TaskCtx) => Promise<void>): Job {
   const ctrl = new AbortController()
   const queuedAt = Date.now()
   controllers.set(job.id, ctrl)
@@ -78,6 +82,7 @@ export function runJob(job: Job, queue: QueueName, task: Task): Job {
   void (async () => {
     let acquired = false
     try {
+      if (beforeQueue) await beforeQueue(ctx)
       await acquire(queue, ctrl.signal)
       acquired = true
       if (ctrl.signal.aborted) {
@@ -111,10 +116,10 @@ export async function cancelJob(id: string): Promise<void> {
   const raw = getJobRaw(id)
   if (!raw) return
   const ctrl = controllers.get(id)
+  // A live job reports 'canceled' itself once its task stops; marking it here first could be overwritten by
+  // 'done' if the task was already finishing, leaving a canceled job with a saved result.
   if (ctrl) ctrl.abort()
-  if (raw.status === 'queued' || raw.status === 'running') {
-    emit.job(updateJob(id, { status: 'canceled', message: null }))
-  }
+  else if (raw.status === 'queued' || raw.status === 'running') emit.job(updateJob(id, { status: 'canceled', message: null }))
   if (raw.remote_id && raw.provider === 'higgsfield') {
     void cancelRequest(raw.remote_id).catch(() => {})
   }

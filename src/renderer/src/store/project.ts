@@ -45,6 +45,8 @@ interface ProjectState {
 
   applyClip(clipId: string, patch: Partial<Clip>): void
   applyCharacter(characterId: string, patch: Partial<Character>): void
+  /** Adds a character the main process already saved, so the next save does not drop it. */
+  receiveCharacter(character: Character): void
   addAsset(asset: Asset): void
   upsertJob(job: Job): void
 }
@@ -432,6 +434,10 @@ export const useProject = create<ProjectState>((set, get) => {
     },
     applyCharacter: (characterId, patch) =>
       set({ characters: get().characters.map((c) => (c.id === characterId ? { ...c, ...patch } : c)) }),
+    receiveCharacter: (character) => {
+      if (character.projectId !== get().project?.id || get().characters.some((c) => c.id === character.id)) return
+      set({ characters: [...get().characters, character] })
+    },
     addAsset: (asset) => {
       if (asset.projectId !== get().project?.id) return
       const prev = get().assets[asset.id]

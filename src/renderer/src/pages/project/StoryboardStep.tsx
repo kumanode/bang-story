@@ -610,14 +610,15 @@ function VideoSelectModal({
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [busy, setBusy] = useState(false)
 
-  // Pre-select clips that have an image and need video
+  // Pre-selects clips that still need a video, once per opening: clips change while jobs finish, and
+  // re-running this then would wipe the creator's picks.
   useEffect(() => {
     if (!open) return
     const need = clips
       .filter((c) => c.imageAssetId && !c.videoAssetId && !isRunning(jobFor(jobs, 'video', { clipId: c.id })))
       .map((c) => c.id)
     setSelectedIds(new Set(need.length ? need : clips.filter((c) => c.imageAssetId).map((c) => c.id)))
-  }, [open, clips])
+  }, [open])
 
   const readyClips = useMemo(() => clips.filter((c) => c.imageAssetId), [clips])
   const model = getVideoModel(project.videoModel)
@@ -828,7 +829,6 @@ export function StoryboardStep() {
   /** A character id, "new" for an unsaved one, or null. */
   const [openChar, setOpenChar] = useState<string | null>(null)
   const [credits, setCredits] = useState<number | null>(null)
-  const [videoCredits, setVideoCredits] = useState<number | null>(null)
   const [creditMap, setCreditMap] = useState<Map<number, number> | null>(null)
   const [videoModalOpen, setVideoModalOpen] = useState(false)
   const [cancellingAll, setCancellingAll] = useState(false)
@@ -887,38 +887,37 @@ export function StoryboardStep() {
     return { imgs, voices, needImg, videoRunning, needVideo, total: clips.reduce((n, c) => n + c.durationMs, 0) }
   }, [clips, jobs])
 
-  // Video length follows each clip's voice, so the cost is estimated per video length and summed.
+  // Video length follows each clip's voice, so the cost is estimated once per distinct length. Every clip with
+  // an image is priced, because the picker can also remake clips that already have a video.
   const videoLengths = useMemo(() => {
     if (!project || isFlow2Video) return ''
     const model = getVideoModel(project.videoModel)
-    return stats.needVideo.map((c) => fitDuration(model, c.durationMs / 1000) ?? 5).join(',')
-  }, [stats.needVideo, project?.videoModel, isFlow2Video])
+    const lengths = clips.filter((c) => c.imageAssetId).map((c) => fitDuration(model, c.durationMs / 1000) ?? 5)
+    return [...new Set(lengths)].sort((a, b) => a - b).join(',')
+  }, [clips, project?.videoModel, isFlow2Video])
 
   useEffect(() => {
     if (!project || !videoLengths) {
-      setVideoCredits(null)
       setCreditMap(null)
       return
     }
-    const lengths = videoLengths.split(',').map(Number)
-    const unique = [...new Set(lengths)]
+    const unique = videoLengths.split(',').map(Number)
     const model = getVideoModel(project.videoModel).id
     let live = true
     void Promise.all(unique.map((s) => window.api.generate.estimate('video', model, project.aspectRatio, s, project.videoResolution))).then((list) => {
       if (!live) return
-      if (list.some((e) => e?.credits == null)) {
-        setVideoCredits(null)
-        setCreditMap(null)
-        return
-      }
-      const bySec = new Map(unique.map((s, i) => [s, list[i]!.credits]))
-      setCreditMap(bySec)
-      setVideoCredits(lengths.reduce((n, s) => n + (bySec.get(s) ?? 0), 0))
+      setCreditMap(list.some((e) => e?.credits == null) ? null : new Map(unique.map((s, i) => [s, list[i]!.credits])))
     })
     return () => {
       live = false
     }
-  }, [videoLengths, project?.aspectRatio, project?.videoResolution])
+  }, [videoLengths, project?.videoModel, project?.aspectRatio, project?.videoResolution])
+
+  const videoCredits = useMemo(() => {
+    if (!project || !creditMap) return null
+    const model = getVideoModel(project.videoModel)
+    return stats.needVideo.reduce((n, c) => n + (creditMap.get(fitDuration(model, c.durationMs / 1000) ?? 5) ?? 0), 0)
+  }, [creditMap, stats.needVideo, project?.videoModel])
 
   if (!project) return null
   const selIndex = Math.max(0, clips.findIndex((c) => c.id === selectedClipId))
@@ -948,10 +947,12 @@ export function StoryboardStep() {
   }
 
   const narration = useNarration()
+  // Videos are made last: the voice must be final so each video matches its clip length. Clips are picked in
+  // the video dialog, so only some of them need a picture.
   const readyForVideo =
-    clips.length > 0 &&
     clips.some((c) => c.imageAssetId) &&
     narration.voiced > 0 &&
+    narration.stale === 0 &&
     !narration.running
 
   // Scenes added or rewritten in the script since the last visual plan.
@@ -971,32 +972,53 @@ export function StoryboardStep() {
     }
   }
 
+  if (!clips.length)
+    return (
+      <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
+        <h2 className="font-display text-3xl font-bold">Storyboard masih kosong</h2>
+        <p className="max-w-md text-ink-2">Tulis naskahnya dulu di langkah Naskah, lalu buat visual tiap adegan. Kamu juga bisa menambah klip sendiri.</p>
+        <div className="flex gap-2.5">
+          <Button onClick={() => updateProject({ step: 2 })}>Ke Naskah</Button>
+          <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => addClip(null)}>
+            Tambah klip
+          </Button>
+        </div>
+      </div>
+    )
+
   return (
     <div className="flex h-full flex-col">
       <div className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface px-6">
-        {characters.length > 0 && (
-          <div className="flex items-center gap-2 border-r border-line pr-4">
-            <span className="text-xs font-semibold text-muted">Tokoh:</span>
-            <div className="flex items-center gap-1.5">
-              {characters.map((c) => {
-                const sheet = c.sheetAssetId ? assets[c.sheetAssetId] : null
-                const running = isRunning(jobFor(jobs, 'sheet', { characterId: c.id }))
-                return (
-                  <button
-                    key={c.id}
-                    type="button"
-                    onClick={() => setOpenChar(c.id)}
-                    title={sheet ? `Lembar karakter ${c.name}` : `${c.name} belum punya lembar karakter`}
-                    className="relative flex items-center justify-center rounded-full transition-transform hover:scale-105"
-                  >
-                    <CharacterAvatar name={c.name} sheetUrl={sheet?.url} size={32} busy={running} />
-                    {!sheet && !running && <span className="size-1.5 rounded-full bg-accent" title="Belum ada gambar karakter" />}
-                  </button>
-                )
-              })}
-            </div>
+        <div className="flex min-w-0 items-center gap-2 border-r border-line pr-4">
+          <span className="text-xs font-semibold text-muted">Tokoh:</span>
+          <div className="scroll-thin flex min-w-0 items-center gap-1.5 overflow-x-auto py-1">
+            {characters.map((c) => {
+              const sheet = c.sheetAssetId ? assets[c.sheetAssetId] : null
+              const running = isRunning(jobFor(jobs, 'sheet', { characterId: c.id }))
+              return (
+                <button
+                  key={c.id}
+                  type="button"
+                  onClick={() => setOpenChar(c.id)}
+                  title={sheet ? `Lembar karakter ${c.name}` : `${c.name} belum punya lembar karakter`}
+                  className="relative flex items-center justify-center rounded-full transition-transform hover:scale-105"
+                >
+                  <CharacterAvatar name={c.name} sheetUrl={sheet?.url} size={32} busy={running} />
+                  {!sheet && !running && <span className="absolute right-0 top-0 size-2 rounded-full bg-accent ring-2 ring-surface" title="Belum ada gambar karakter" />}
+                </button>
+              )
+            })}
+            <button
+              type="button"
+              onClick={() => setOpenChar('new')}
+              title="Tambah pemeran"
+              aria-label="Tambah pemeran"
+              className="inline-flex size-8 shrink-0 items-center justify-center rounded-full border border-dashed border-line-3 text-ink-2 hover:border-ink-2"
+            >
+              <Plus className="size-[15px]" />
+            </button>
           </div>
-        )}
+        </div>
 
         <Button
           className="border-[1.5px] border-ink font-semibold"

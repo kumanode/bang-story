@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { estimateWordTimings } from '@shared/captions'
 import { stripVoiceTags } from '@shared/speech'
-import { getImageModel, getVideoModel, imageBody, maxRefs, promptLimit, resolutionOptions, videoBody, type HfModel } from '@shared/higgsfield'
+import { LIP_SYNC_FALLBACK_MODEL, getImageModel, getVideoModel, imageBody, maxRefs, promptLimit, resolutionOptions, videoBody, type HfModel } from '@shared/higgsfield'
 import { getStyle, NO_TEXT } from '@shared/styles'
 import type { AspectRatio, Asset, Character, Clip, CreditEstimate, Job, Project, ThumbnailRequest, WordTiming } from '@shared/types'
 import { getDb } from './db'
@@ -227,7 +227,11 @@ async function finishHiggsfield(ctx: TaskCtx, job: Job, requestId: string, paylo
   return asset.id
 }
 
-function startHiggsfield(job: Job, build: (ctx: TaskCtx) => Promise<{ endpoint: string; body: Record<string, unknown>; payload: HfPayload }>): Job {
+function startHiggsfield(
+  job: Job,
+  build: (ctx: TaskCtx) => Promise<{ endpoint: string; body: Record<string, unknown>; payload: HfPayload }>,
+  beforeQueue?: (ctx: TaskCtx) => Promise<void>
+): Job {
   emit.job(job)
   return runJob(job, 'higgsfield', async (ctx) => {
     ctx.progress(0.04, 'Menyiapkan prompt')
@@ -240,7 +244,7 @@ function startHiggsfield(job: Job, build: (ctx: TaskCtx) => Promise<{ endpoint: 
     ctx.setRemote(requestId)
     updateJobPayload(job.id, payload)
     return finishHiggsfield(ctx, job, requestId, payload)
-  })
+  }, beforeQueue)
 }
 
 function updateJobPayload(jobId: string, payload: HfPayload): void {
@@ -568,16 +572,10 @@ export function generateClipVideo(clipId: string): Job {
       `${splitAvoid(fresh.visualPrompt).scene.replace(/\.$/, '')}. Subtle natural motion of the characters and environment, the camera slowly pushes in. Keep the art style of the first frame.`
     if (model.input.mode === 'reference')
       prompt = `Open on the exact scene of the reference image and keep its art style, characters and composition. ${prompt}`
-    let audioUrl: string | null = null
-    if (fresh.audioAssetId && (model.props.audio_url || model.props.audio_urls)) {
-      const audio = getAsset(fresh.audioAssetId)
-      if (audio) {
-        audioUrl = await publicUrlFor(audio, ctx.signal)
-      }
-    }
+    // No audio here: a speech track makes audio-capable models animate mouths, which only Lip Sync asks for.
     return {
       endpoint: model.id,
-      body: videoBody(model, prompt, url, fresh.durationMs / 1000, project.aspectRatio, project.videoResolution, audioUrl),
+      body: videoBody(model, prompt, url, fresh.durationMs / 1000, project.aspectRatio, project.videoResolution),
       payload: { target: 'clip-video', model: model.id, prompt }
     }
   })
@@ -656,8 +654,7 @@ export function generateMissingImages(projectId: string): Job[] {
   return jobs
 }
 
-/** Turns every clip that has an image but no AI video yet into a video. */
-/** Generates AI video for specific clips that have an image. */
+/** Generates AI video for the clips the creator picked; every one of them needs an image. */
 export function generateClipsVideo(clipIds: string[]): Job[] {
   if (!clipIds.length) return []
   for (const id of clipIds) {
@@ -669,52 +666,53 @@ export function generateClipsVideo(clipIds: string[]): Job[] {
   return clipIds.map((id) => generateClipVideo(id))
 }
 
+/**
+ * Animates a clip with its voice-over so mouths move with the speech. Uses the project's video model when it
+ * accepts audio, otherwise Wan 2.7. A missing voice-over is made first, outside the Higgsfield queue slot.
+ */
 export function generateClipLipSync(clipId: string): Job {
   const existing = activeJobFor({ clipId }, 'video')
   if (existing) return existing
   const clip = getClip(clipId)
   if (!clip.imageAssetId) throw new Error('Buat gambar klip ini dulu sebelum membuat video Lip Sync.')
+  if (!clip.audioAssetId && !clip.narration.trim()) throw new Error('Klip ini belum punya narasi atau suara untuk disinkronkan.')
 
-  const project = getProject(clip.projectId)
   const job = insertJob({ projectId: clip.projectId, clipId, kind: 'video', provider: 'higgsfield' })
-  return startHiggsfield(job, async (ctx) => {
-    const fresh = getClip(clipId)
-    const image = getAsset(fresh.imageAssetId)
-    if (!image) throw new Error('Gambar klip tidak ditemukan')
+  const ensureVoice = async (ctx: TaskCtx): Promise<void> => {
+    if (getClip(clipId).audioAssetId) return
+    ctx.progress(0.02, 'Membuat suara narasi/dialog dulu')
+    generateClipTts(clipId)
+    const started = Date.now()
+    while (activeJobFor({ clipId }, 'tts') && Date.now() - started < 10 * 60 * 1000) await sleep(1500, ctx.signal)
+  }
+  return startHiggsfield(
+    job,
+    async (ctx) => {
+      const fresh = getClip(clipId)
+      const project = getProject(fresh.projectId)
+      const image = getAsset(fresh.imageAssetId)
+      if (!image) throw new Error('Gambar klip tidak ditemukan')
+      const audioAsset = fresh.audioAssetId ? getAsset(fresh.audioAssetId) : null
+      if (!audioAsset) throw new Error('Suara klip ini gagal dibuat. Buat suara narasinya dulu, lalu coba lagi.')
 
-    let audioAsset = fresh.audioAssetId ? getAsset(fresh.audioAssetId) : null
-    if (!audioAsset && fresh.narration.trim()) {
-      ctx.progress(0.04, 'Membuat suara narasi/dialog dulu')
-      generateClipTts(clipId)
-      const started = Date.now()
-      while (Date.now() - started < 3 * 60 * 1000) {
-        const pending = activeJobFor({ clipId }, 'tts')
-        if (!pending) break
-        await sleep(1500, ctx.signal)
+      const projModel = getVideoModel(project.videoModel)
+      const model = projModel.props.audio_url || projModel.props.audio_urls ? projModel : getVideoModel(LIP_SYNC_FALLBACK_MODEL)
+
+      ctx.progress(0.08, 'Menyiapkan gambar dan suara untuk Lip Sync')
+      const imgUrl = await publicUrlFor(image, ctx.signal)
+      const audioUrl = await publicUrlFor(audioAsset, ctx.signal)
+
+      const basePrompt = fresh.videoPrompt.trim() || splitAvoid(fresh.visualPrompt).scene.replace(/\.$/, '')
+      const lipSyncPrompt = `Close-up or medium shot of the character speaking naturally with synchronized mouth and lip movements matching the speech audio. ${basePrompt}`
+
+      return {
+        endpoint: model.id,
+        body: videoBody(model, lipSyncPrompt, imgUrl, fresh.durationMs / 1000, project.aspectRatio, project.videoResolution, audioUrl),
+        payload: { target: 'clip-video', model: model.id, prompt: lipSyncPrompt }
       }
-      const afterTts = getClip(clipId)
-      audioAsset = afterTts.audioAssetId ? getAsset(afterTts.audioAssetId) : null
-    }
-
-    if (!audioAsset) throw new Error('Belum ada audio suara untuk klip ini. Tulis naskah atau buat suara narasi dulu.')
-
-    const projModel = getVideoModel(project.videoModel)
-    const supportsAudio = !!(projModel.props.audio_url || projModel.props.audio_urls)
-    const model = supportsAudio ? projModel : getVideoModel('wan/v2.7/image-to-video')
-
-    ctx.progress(0.08, 'Menyiapkan gambar dan suara untuk Lip Sync')
-    const imgUrl = await publicUrlFor(image, ctx.signal)
-    const audioUrl = await publicUrlFor(audioAsset, ctx.signal)
-
-    const basePrompt = fresh.videoPrompt.trim() || `${splitAvoid(fresh.visualPrompt).scene.replace(/\.$/, '')}`
-    const lipSyncPrompt = `Close-up or medium shot of the character speaking naturally with synchronized mouth and lip movements matching the speech audio. ${basePrompt}`
-
-    return {
-      endpoint: model.id,
-      body: videoBody(model, lipSyncPrompt, imgUrl, fresh.durationMs / 1000, project.aspectRatio, project.videoResolution, audioUrl),
-      payload: { target: 'clip-video', model: model.id, prompt: lipSyncPrompt }
-    }
-  })
+    },
+    ensureVoice
+  )
 }
 
 export function generateClipsLipSync(clipIds: string[]): Job[] {
@@ -728,6 +726,7 @@ export function generateClipsLipSync(clipIds: string[]): Job[] {
   return clipIds.map((id) => generateClipLipSync(id))
 }
 
+/** Turns every clip that has an image but no AI video yet into a video. */
 export function generateMissingVideos(projectId: string): Job[] {
   const clips = clipsOf(projectId)
   if (clips.some((c) => !c.imageAssetId)) throw new Error('Buat gambar semua klip dulu sebelum menjadikannya video.')

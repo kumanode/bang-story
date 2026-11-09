@@ -29,7 +29,7 @@ function InsertGap({ onInsert }: { onInsert: () => void }) {
 }
 
 function SceneCard({ clip, index, total, onInsert }: { clip: Clip; index: number; total: number; onInsert: () => void }) {
-  const { project, characters, assets, updateClip, moveClip, removeClip, flush } = useProject()
+  const { project, characters, assets, updateClip, moveClip, removeClip, flush, receiveCharacter } = useProject()
   const { toast } = useApp()
   const [revisionOpen, setRevisionOpen] = useState(false)
   const [revisionRequest, setRevisionRequest] = useState('')
@@ -65,10 +65,11 @@ function SceneCard({ clip, index, total, onInsert }: { clip: Clip; index: number
     try {
       await flush()
       const result = await window.api.story.reviseScene(clip.projectId, clip.id, revisionRequest)
+      if (result.newCharacter) receiveCharacter(result.newCharacter)
       updateClip(clip.id, {
         story: result.story,
         narration: result.narration,
-        ...(result.speakerId !== undefined ? { speakerId: result.speakerId } : {}),
+        speakerId: result.speakerId,
         ...(clip.audioAssetId ? {} : { durationMs: estimateNarrationMs(result.narration) })
       })
       setRevisionOpen(false)

@@ -500,52 +500,99 @@ export interface ScriptScene {
   gender?: 'female' | 'male' | 'unknown' | null
 }
 
+type Gender = 'female' | 'male' | 'unknown'
+
+const GENDER_LABEL: Record<Gender, string> = { female: 'Perempuan', male: 'Laki-laki', unknown: 'Tokoh' }
+
+// Speakers found in the script get this stand-in description until the visual step writes a real look.
+const SPEAKER_PLACEHOLDER = /^Tokoh \((Perempuan|Laki-laki|Tokoh)\): /
+
+function speakerPlaceholder(name: string, gender: Gender): string {
+  return `Tokoh (${GENDER_LABEL[gender]}): ${name}`
+}
+
+function placeholderGender(description: string): Gender | null {
+  const m = SPEAKER_PLACEHOLDER.exec(description)
+  if (!m) return null
+  return m[1] === 'Perempuan' ? 'female' : m[1] === 'Laki-laki' ? 'male' : 'unknown'
+}
+
+/**
+ * Hands out distinct voices to auto-cast speakers, preferring ones no other character or the narrator uses.
+ * Only Gemini has a fixed voice library; ElevenLabs voice IDs belong to the user's account, so other
+ * providers get null and the speaker follows the narrator until the creator picks a voice.
+ */
+function voiceCaster(projectId: string): (gender: Gender) => { voice: string | null; provider: string | null } {
+  const db = getDb()
+  const proj = db.prepare('SELECT tts_voice, tts_provider FROM projects WHERE id = ?').get(projectId) as Row | undefined
+  const provider = (proj?.tts_provider as string | undefined) || 'gemini'
+  if (provider !== 'gemini') return () => ({ voice: null, provider: null })
+  const used = new Set<string>([
+    String(proj?.tts_voice || 'Charon'),
+    ...(db.prepare("SELECT tts_voice FROM characters WHERE project_id = ? AND tts_voice IS NOT NULL AND tts_provider = 'gemini'").all(projectId) as Row[]).map(
+      (r) => String(r.tts_voice)
+    )
+  ])
+  let lastUnknown: 'female' | 'male' = 'male'
+  return (gender) => {
+    // Unknown speakers alternate so two of them in a row do not share a voice family.
+    const g = gender === 'unknown' ? (lastUnknown = lastUnknown === 'male' ? 'female' : 'male') : gender
+    const pool = g === 'female' ? FEMALE_GEMINI_VOICES : MALE_GEMINI_VOICES
+    const voice = pool.find((v) => !used.has(v)) ?? pool.find((v) => v !== proj?.tts_voice) ?? pool[0]
+    used.add(voice)
+    return { voice, provider }
+  }
+}
+
+function insertSpeaker(projectId: string, name: string, gender: Gender, cast: ReturnType<typeof voiceCaster>): string {
+  const db = getDb()
+  const id = randomUUID()
+  const sort = (db.prepare('SELECT COUNT(*) AS n FROM characters WHERE project_id = ?').get(projectId) as Row).n as number
+  const { voice, provider } = cast(gender)
+  db.prepare('INSERT INTO characters (id, project_id, name, description, sort, tts_voice, tts_provider) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+    id,
+    projectId,
+    name,
+    speakerPlaceholder(name, gender),
+    sort,
+    voice,
+    provider
+  )
+  return id
+}
+
+/**
+ * Finds the character with this name or adds one as a speaker. Returns the new character when one was
+ * created, so the renderer can add it before its next save (a save drops characters it does not know).
+ */
+export function ensureSpeaker(projectId: string, name: string, gender: Gender): { id: string; created: Character | null } {
+  const key = name.trim().toLowerCase()
+  const match = charactersOf(projectId).find((c) => c.name.trim().toLowerCase() === key)
+  if (match) return { id: match.id, created: null }
+  const gen = gender !== 'unknown' ? gender : detectGender(name)
+  const id = insertSpeaker(projectId, name.trim(), gen, voiceCaster(projectId))
+  return { id, created: charactersOf(projectId).find((c) => c.id === id) ?? null }
+}
+
 /**
  * Replaces all scenes with a freshly written script. Characters stay: the visual step reuses the ones
- * whose names come back, so their character sheets survive a rewrite.
+ * whose names come back, so their character sheets survive a rewrite. Speakers new to the project are
+ * added with a voice that fits their gender.
  */
 export function replaceScript(projectId: string, title: string, scenes: ScriptScene[]): void {
   const db = getDb()
   db.transaction(() => {
-    const existing = db.prepare('SELECT id, name, tts_voice FROM characters WHERE project_id = ?').all(projectId) as Row[]
+    const existing = db.prepare('SELECT id, name FROM characters WHERE project_id = ?').all(projectId) as Row[]
     const byName = new Map<string, string>(existing.map((c) => [String(c.name).trim().toLowerCase(), c.id as string]))
-    const proj = db.prepare('SELECT tts_voice, tts_provider FROM projects WHERE id = ?').get(projectId) as Row | undefined
-    const projVoice = proj?.tts_voice || 'Charon'
-    const femalePool = FEMALE_GEMINI_VOICES.filter((v) => v !== projVoice)
-    const malePool = MALE_GEMINI_VOICES.filter((v) => v !== projVoice)
-    let femaleIdx = 0
-    let maleIdx = 0
-    let charSort = existing.length
+    const cast = voiceCaster(projectId)
 
     for (const c of scenes) {
       const sp = (c.speaker || '').trim()
-      if (!sp) continue
       const key = sp.toLowerCase()
-      if (!byName.has(key)) {
-        const id = randomUUID()
-        const gen = c.gender && c.gender !== 'unknown' ? c.gender : detectGender(sp, c.story)
-        let voice: string
-        if (gen === 'female') {
-          voice = femalePool[femaleIdx % femalePool.length]
-          femaleIdx++
-        } else if (gen === 'male') {
-          voice = malePool[maleIdx % malePool.length]
-          maleIdx++
-        } else {
-          voice = femaleIdx <= maleIdx ? femalePool[femaleIdx++ % femalePool.length] : malePool[maleIdx++ % malePool.length]
-        }
-        const genLabel = gen === 'female' ? 'Perempuan' : gen === 'male' ? 'Laki-laki' : 'Tokoh'
-        db.prepare('INSERT INTO characters (id, project_id, name, description, sort, tts_voice, tts_provider) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-          id,
-          projectId,
-          sp,
-          `Tokoh (${genLabel}): ${sp}`,
-          charSort++,
-          voice,
-          proj?.tts_provider || 'gemini'
-        )
-        byName.set(key, id)
-      }
+      if (!sp || byName.has(key)) continue
+      // Only the name is a safe hint here: the scene note may describe other people in the shot.
+      const gen = c.gender && c.gender !== 'unknown' ? c.gender : detectGender(sp)
+      byName.set(key, insertSpeaker(projectId, sp, gen, cast))
     }
 
     db.prepare('DELETE FROM clips WHERE project_id = ?').run(projectId)
@@ -579,44 +626,39 @@ export interface SceneVisual {
 export function applyVisuals(projectId: string, characters: { name: string; description: string }[], scenes: SceneVisual[]): void {
   const db = getDb()
   db.transaction(() => {
-    const existing = db.prepare('SELECT id, name, tts_voice FROM characters WHERE project_id = ? ORDER BY sort').all(projectId) as Row[]
-    const byName = new Map<string, string>(existing.map((c) => [String(c.name).trim().toLowerCase(), c.id as string]))
-    const proj = db.prepare('SELECT tts_voice, tts_provider FROM projects WHERE id = ?').get(projectId) as Row | undefined
-    const projVoice = proj?.tts_voice || 'Charon'
-    const femalePool = FEMALE_GEMINI_VOICES.filter((v) => v !== projVoice)
-    const malePool = MALE_GEMINI_VOICES.filter((v) => v !== projVoice)
+    const existing = db.prepare('SELECT id, name, description, tts_voice FROM characters WHERE project_id = ? ORDER BY sort').all(projectId) as Row[]
+    const byName = new Map<string, Row>(existing.map((c) => [String(c.name).trim().toLowerCase(), c]))
+    const cast = voiceCaster(projectId)
     let sort = existing.length
 
     for (const c of characters) {
       const key = c.name.trim().toLowerCase()
       if (!key) continue
-      const gen = detectGender(c.name, c.description)
-      if (byName.has(key)) {
-        const charRow = existing.find((x) => String(x.name).trim().toLowerCase() === key)
-        if (charRow && gen !== 'unknown') {
-          const currentVoice = charRow.tts_voice as string | null
-          const currentGen = currentVoice ? geminiVoiceGender(currentVoice) : undefined
-          if (!currentVoice || (currentGen && currentGen !== gen)) {
-            const pool = gen === 'female' ? femalePool : malePool
-            const newVoice = pool[sort % pool.length]
-            db.prepare('UPDATE characters SET tts_voice = ? WHERE id = ?').run(newVoice, charRow.id)
-          }
+      const known = byName.get(key)
+      if (known) {
+        // A speaker the script step added still has a stand-in description: give it the planned look.
+        // Voices the creator picked are never touched; only a voice cast without knowing the gender is corrected.
+        const castAs = placeholderGender(String(known.description ?? ''))
+        if (castAs === null || !c.description.trim()) continue
+        db.prepare('UPDATE characters SET description = ? WHERE id = ?').run(c.description, known.id)
+        const gen = detectGender(c.name, c.description)
+        const voiceGen = known.tts_voice ? geminiVoiceGender(String(known.tts_voice)) : undefined
+        if (castAs === 'unknown' && gen !== 'unknown' && voiceGen && voiceGen !== gen) {
+          const { voice } = cast(gen)
+          if (voice) db.prepare('UPDATE characters SET tts_voice = ? WHERE id = ?').run(voice, known.id)
         }
         continue
       }
       const id = randomUUID()
-      const pool = gen === 'female' ? femalePool : malePool
-      const voice = pool[sort % pool.length]
-      db.prepare('INSERT INTO characters (id, project_id, name, description, sort, tts_voice, tts_provider) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+      // Characters seen only in pictures follow the narrator until the creator gives them a voice.
+      db.prepare('INSERT INTO characters (id, project_id, name, description, sort) VALUES (?, ?, ?, ?, ?)').run(
         id,
         projectId,
         c.name.trim(),
         c.description,
-        sort++,
-        voice,
-        proj?.tts_provider || 'gemini'
+        sort++
       )
-      byName.set(key, id)
+      byName.set(key, { id, name: c.name, description: c.description, tts_voice: null })
     }
     const update = db.prepare(
       `UPDATE clips SET visual_prompt = @visualPrompt, visual_source = @visualSource, character_ids = @characterIds,
@@ -625,7 +667,7 @@ export function applyVisuals(projectId: string, characters: { name: string; desc
     )
     for (const v of scenes) {
       const clip = getClip(v.clipId)
-      const ids = [...new Set(v.characterNames.map((n) => byName.get(n.trim().toLowerCase())).filter((x): x is string => !!x))]
+      const ids = [...new Set(v.characterNames.map((n) => byName.get(n.trim().toLowerCase())?.id as string | undefined).filter((x): x is string => !!x))]
       update.run({ ...v, projectId, visualSource: visualSourceOf(clip), characterIds: JSON.stringify(ids) })
     }
     db.prepare(

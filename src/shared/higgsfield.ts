@@ -37,6 +37,8 @@ export const HF_VIDEO_MODELS = MODELS.filter((m) => m.kind === 'video')
 
 export const DEFAULT_IMAGE_MODEL = 'marketing-studio/image/sunburst'
 export const DEFAULT_VIDEO_MODEL = 'kling-video/v3.0/std/image-to-video'
+/** Used for Lip Sync when the project's video model cannot take a speech track. */
+export const LIP_SYNC_FALLBACK_MODEL = 'wan/v2.7/image-to-video'
 
 export function getImageModel(id: string | null | undefined): HfModel {
   return HF_IMAGE_MODELS.find((m) => m.id === id) ?? HF_IMAGE_MODELS.find((m) => m.id === DEFAULT_IMAGE_MODEL)!

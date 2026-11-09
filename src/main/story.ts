@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { CAMERA_PRESETS, MOTION_STRENGTHS, TRANSITIONS } from '@shared/motion'
 import { formatChapters } from '@shared/chapters'
-import { LANGUAGES, clipCountFor, detectGender, FEMALE_GEMINI_VOICES, MALE_GEMINI_VOICES } from '@shared/models'
+import { LANGUAGES, clipCountFor } from '@shared/models'
 import { estimateNarrationMs, needsVisual, wordCount } from '@shared/script'
 import { getStyle } from '@shared/styles'
 import type {
@@ -11,6 +11,7 @@ import type {
   MusicPrompt,
   Project,
   ProjectBundle,
+  SceneRevision,
   StoryAct,
   StoryBrief,
   StoryFactMode,
@@ -22,12 +23,11 @@ import type {
   TransitionId,
   YoutubeMetadata
 } from '@shared/types'
-import { applyVisuals, charactersOf, clipsOf, getBundle, getProject, replaceScript, setStoryPlan, type SceneVisual } from './repo'
+import { applyVisuals, charactersOf, clipsOf, ensureSpeaker, getBundle, getProject, replaceScript, setStoryPlan, type SceneVisual } from './repo'
 import { splitNarration } from './narrationSplit'
 import { generateJson } from './services/llm'
 import { emit } from './events'
 import { getSettings, setSettings } from './settings'
-import { getDb } from './db'
 import { STORY_STYLE_IDS } from '@shared/storyStyles'
 import { styleFromBrief, styleGuidance } from './storyStyles'
 import { checkChapterStyle } from './styleCheck'
@@ -796,7 +796,7 @@ export async function generateScript(projectId: string): Promise<ProjectBundle> 
 }
 
 /** Rewrites one scene with nearby context so edits still fit the brief, hook, and act outline. */
-export async function reviseScene(projectId: string, clipId: string, instruction: string): Promise<{ story: string; narration: string; speakerId?: string | null }> {
+export async function reviseScene(projectId: string, clipId: string, instruction: string): Promise<SceneRevision> {
   const project = getProject(projectId)
   const clips = clipsOf(projectId)
   const index = clips.findIndex((c) => c.id === clipId)
@@ -804,41 +804,14 @@ export async function reviseScene(projectId: string, clipId: string, instruction
   const request = str(instruction)
   if (!request) throw new Error('Tulis perubahan yang kamu inginkan dulu.')
   const brief = project.storyPlan?.brief ? normalizeBrief(project.storyPlan.brief) : null
-  const scenes = clips.map((c) => ({ title: c.title, story: c.story, narration: c.narration, speaker: (charactersOf(projectId).find((ch) => ch.id === c.speakerId)?.name) ?? '' }))
+  const nameOf = new Map(charactersOf(projectId).map((ch) => [ch.id, ch.name]))
+  const scenes = clips.map((c) => ({ title: c.title, story: c.story, narration: c.narration, speaker: (c.speakerId && nameOf.get(c.speakerId)) || '' }))
   const { story, narration, speaker, speakerGender } = await rewriteScene(project, brief, scenes, index, request)
   if (!story || !narration) throw new Error('AI belum menghasilkan revisi adegan yang lengkap. Coba lagi.')
 
-  let speakerId: string | null | undefined = undefined
-  if (speaker !== undefined) {
-    const sp = speaker.trim()
-    if (!sp) {
-      speakerId = null
-    } else {
-      const existing = charactersOf(projectId)
-      const match = existing.find((c) => c.name.trim().toLowerCase() === sp.toLowerCase())
-      if (match) {
-        speakerId = match.id
-      } else {
-        const gen = speakerGender === 'female' || speakerGender === 'male' ? speakerGender : detectGender(sp)
-        const pool = (gen === 'female' ? FEMALE_GEMINI_VOICES : MALE_GEMINI_VOICES).filter((v) => v !== project.ttsVoice)
-        const voice = pool[existing.length % pool.length]
-        const id = randomUUID()
-        const db = getDb()
-        db.prepare('INSERT INTO characters (id, project_id, name, description, sort, tts_voice, tts_provider) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
-          id,
-          projectId,
-          sp,
-          `Tokoh (${gen === 'female' ? 'Perempuan' : gen === 'male' ? 'Laki-laki' : 'Tokoh'}): ${sp}`,
-          existing.length,
-          voice,
-          project.ttsProvider
-        )
-        speakerId = id
-      }
-    }
-  }
-
-  return { story, narration, ...(speakerId !== undefined ? { speakerId } : {}) }
+  if (!speaker) return { story, narration, speakerId: null }
+  const { id, created } = ensureSpeaker(projectId, speaker, speakerGender)
+  return { story, narration, speakerId: id, ...(created ? { newCharacter: created } : {}) }
 }
 
 // ---------- step 2 → 3: visuals for the reviewed script ----------

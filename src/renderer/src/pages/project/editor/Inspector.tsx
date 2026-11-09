@@ -76,9 +76,9 @@ function ClipTab({ clip, index }: { clip: Clip; index: number }) {
   const video = clip.videoAssetId ? assets[clip.videoAssetId] : null
   const videoJob = jobFor(jobs, 'video', { clipId: clip.id })
   const videoCamera = clip.videoCamera ?? 'static'
-  // A camera change plays the clip in the preview at once, without moving the playhead.
   const [cancelingVideo, setCancelingVideo] = useState(false)
-    const audition = (): void => useAudition.getState().start({ kind: 'clip', clipId: clip.id })
+  // A camera change plays the clip in the preview at once, without moving the playhead.
+  const audition = (): void => useAudition.getState().start({ kind: 'clip', clipId: clip.id })
   const setCamera = (patch: Partial<Clip>): void => {
     updateClip(clip.id, patch)
     audition()

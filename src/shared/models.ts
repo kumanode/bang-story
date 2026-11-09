@@ -83,6 +83,7 @@ export function geminiVoiceName(id: string): string {
   return GEMINI_LIBRARY_VOICES.find((v) => v.id === id)?.name ?? id
 }
 
+// Voice genders follow Google's Gemini TTS voice list; auto-cast speakers draw from these pools.
 export const FEMALE_GEMINI_VOICES = [
   'Kore',
   'Aoede',
@@ -92,28 +93,28 @@ export const FEMALE_GEMINI_VOICES = [
   'Zephyr',
   'Autonoe',
   'Sulafat',
-  'Algieba',
   'Erinome',
   'Laomedeia',
   'Achernar',
+  'Gacrux',
   'Pulcherrima',
-  'Vindemiatrix',
-  'Sadachbia',
-  'Puck'
+  'Vindemiatrix'
 ]
 
 export const MALE_GEMINI_VOICES = [
   'Fenrir',
   'Orus',
   'Charon',
+  'Puck',
   'Alnilam',
-  'Gacrux',
   'Schedar',
   'Achird',
   'Iapetus',
   'Rasalgethi',
   'Zubenelgenubi',
   'Sadaltager',
+  'Sadachbia',
+  'Algieba',
   'Algenib',
   'Umbriel',
   'Enceladus'
@@ -125,17 +126,22 @@ export function geminiVoiceGender(id: string): 'female' | 'male' | undefined {
   return undefined
 }
 
+/**
+ * Guesses a character's gender from their name and their own description. Only pass text about that
+ * character: a scene note that mentions someone else ("Budi hugs his mother") would skew the guess.
+ * Neutral kinship words (saudara, kakak, adik) are left out on purpose.
+ */
 export function detectGender(name: string, description = ''): 'female' | 'male' | 'unknown' {
   const text = `${name} ${description}`.toLowerCase()
   const femaleMatches = text.match(/\b(female|woman|women|girl|mother|mom|sister|daughter|lady|queen|princess|witch|waitress|actress|heroine|perempuan|wanita|gadis|ibu|mama|putri|ratu|nenek|tante|mbak|nyonya|saudari)\b/g) || []
-  const maleMatches = text.match(/\b(male|man|men|boy|father|dad|brother|son|lord|king|prince|wizard|actor|hero|laki-laki|pria|cowok|ayah|bapak|papa|pangeran|raja|kakek|paman|om|mas|tuan|saudara)\b/g) || []
+  const maleMatches = text.match(/\b(male|man|men|boy|father|dad|brother|son|lord|king|prince|wizard|actor|hero|laki-laki|pria|cowok|ayah|bapak|papa|pangeran|raja|kakek|paman|om|mas|tuan)\b/g) || []
 
   if (femaleMatches.length > maleMatches.length) return 'female'
   if (maleMatches.length > femaleMatches.length) return 'male'
 
   const trimmed = name.trim().toLowerCase()
-  if (/^(ibu|mbak|ny\.|mama|tante|kak)\b/i.test(trimmed)) return 'female'
-  if (/^(pak|bapak|mas|om|tn\.|papa|bang)\b/i.test(trimmed)) return 'male'
+  if (/^(ibu|bu|mbak|ny\.|mama|tante)\b/.test(trimmed)) return 'female'
+  if (/^(pak|bapak|mas|om|tn\.|papa|bang)\b/.test(trimmed)) return 'male'
 
   return 'unknown'
 }

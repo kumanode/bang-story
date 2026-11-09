@@ -21,6 +21,7 @@ import type {
   ProjectBundle,
   ProjectSnapshot,
   ProjectSummary,
+  SceneRevision,
   StoryBrief,
   StoryPlan,
   StoryStyleId,
@@ -57,7 +58,7 @@ export interface StudioApi {
     /** Idea → scene-by-scene script (story and voice-over), using the reviewed plan. */
     script(projectId: string): Promise<ProjectBundle>
     /** Revises one scene while preserving continuity with the surrounding story. */
-    reviseScene(projectId: string, clipId: string, instruction: string): Promise<{ story: string; narration: string; speakerId?: string | null }>
+    reviseScene(projectId: string, clipId: string, instruction: string): Promise<SceneRevision>
     /** Script → one image plan per scene; "missing" skips scenes whose plan still matches their story. */
     visuals(projectId: string, mode: 'missing' | 'all'): Promise<ProjectBundle>
     /** A background-music prompt that fits the finished script, for use in Suno or another music AI. */

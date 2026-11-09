@@ -249,6 +249,14 @@ export interface Character {
   ttsProvider?: TtsProvider | null
 }
 
+/** A rewritten scene. speakerId null means the narrator voices it; newCharacter is a speaker the revision added. */
+export interface SceneRevision {
+  story: string
+  narration: string
+  speakerId: string | null
+  newCharacter?: Character
+}
+
 export interface Clip {
   id: string
   projectId: string
