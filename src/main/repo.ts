@@ -20,6 +20,7 @@ import type {
   StoryPlan
 } from '@shared/types'
 import { visualSourceOf } from '@shared/script'
+import { detectGender, FEMALE_GEMINI_VOICES, MALE_GEMINI_VOICES, geminiVoiceGender } from '@shared/models'
 import { getDb } from './db'
 import { assetUrl, projectDir, projectsRoot } from './paths'
 import { getSettings } from './settings'
@@ -495,6 +496,8 @@ export interface ScriptScene {
   story: string
   narration: string
   durationMs: number
+  speaker?: string | null
+  gender?: 'female' | 'male' | 'unknown' | null
 }
 
 /**
@@ -504,12 +507,57 @@ export interface ScriptScene {
 export function replaceScript(projectId: string, title: string, scenes: ScriptScene[]): void {
   const db = getDb()
   db.transaction(() => {
+    const existing = db.prepare('SELECT id, name, tts_voice FROM characters WHERE project_id = ?').all(projectId) as Row[]
+    const byName = new Map<string, string>(existing.map((c) => [String(c.name).trim().toLowerCase(), c.id as string]))
+    const proj = db.prepare('SELECT tts_voice, tts_provider FROM projects WHERE id = ?').get(projectId) as Row | undefined
+    const projVoice = proj?.tts_voice || 'Charon'
+    const femalePool = FEMALE_GEMINI_VOICES.filter((v) => v !== projVoice)
+    const malePool = MALE_GEMINI_VOICES.filter((v) => v !== projVoice)
+    let femaleIdx = 0
+    let maleIdx = 0
+    let charSort = existing.length
+
+    for (const c of scenes) {
+      const sp = (c.speaker || '').trim()
+      if (!sp) continue
+      const key = sp.toLowerCase()
+      if (!byName.has(key)) {
+        const id = randomUUID()
+        const gen = c.gender && c.gender !== 'unknown' ? c.gender : detectGender(sp, c.story)
+        let voice: string
+        if (gen === 'female') {
+          voice = femalePool[femaleIdx % femalePool.length]
+          femaleIdx++
+        } else if (gen === 'male') {
+          voice = malePool[maleIdx % malePool.length]
+          maleIdx++
+        } else {
+          voice = femaleIdx <= maleIdx ? femalePool[femaleIdx++ % femalePool.length] : malePool[maleIdx++ % malePool.length]
+        }
+        const genLabel = gen === 'female' ? 'Perempuan' : gen === 'male' ? 'Laki-laki' : 'Tokoh'
+        db.prepare('INSERT INTO characters (id, project_id, name, description, sort, tts_voice, tts_provider) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+          id,
+          projectId,
+          sp,
+          `Tokoh (${genLabel}): ${sp}`,
+          charSort++,
+          voice,
+          proj?.tts_provider || 'gemini'
+        )
+        byName.set(key, id)
+      }
+    }
+
     db.prepare('DELETE FROM clips WHERE project_id = ?').run(projectId)
     const insert = db.prepare(
-      `INSERT INTO clips (id, project_id, sort, title, story, narration, duration_ms, character_ids)
-       VALUES (?, ?, ?, ?, ?, ?, ?, '[]')`
+      `INSERT INTO clips (id, project_id, sort, title, story, narration, duration_ms, character_ids, speaker_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, '[]', ?)`
     )
-    scenes.forEach((c, i) => insert.run(randomUUID(), projectId, i, c.title, c.story, c.narration, c.durationMs))
+    scenes.forEach((c, i) => {
+      const sp = (c.speaker || '').trim().toLowerCase()
+      const speakerId = sp ? (byName.get(sp) ?? null) : null
+      insert.run(randomUUID(), projectId, i, c.title, c.story, c.narration, c.durationMs, speakerId)
+    })
     db.prepare("UPDATE projects SET title = ?, status = 'script', step = 2, updated_at = ? WHERE id = ?").run(title, Date.now(), projectId)
   })()
 }
@@ -531,19 +579,42 @@ export interface SceneVisual {
 export function applyVisuals(projectId: string, characters: { name: string; description: string }[], scenes: SceneVisual[]): void {
   const db = getDb()
   db.transaction(() => {
-    const existing = db.prepare('SELECT id, name FROM characters WHERE project_id = ? ORDER BY sort').all(projectId) as Row[]
+    const existing = db.prepare('SELECT id, name, tts_voice FROM characters WHERE project_id = ? ORDER BY sort').all(projectId) as Row[]
     const byName = new Map<string, string>(existing.map((c) => [String(c.name).trim().toLowerCase(), c.id as string]))
+    const proj = db.prepare('SELECT tts_voice, tts_provider FROM projects WHERE id = ?').get(projectId) as Row | undefined
+    const projVoice = proj?.tts_voice || 'Charon'
+    const femalePool = FEMALE_GEMINI_VOICES.filter((v) => v !== projVoice)
+    const malePool = MALE_GEMINI_VOICES.filter((v) => v !== projVoice)
     let sort = existing.length
+
     for (const c of characters) {
       const key = c.name.trim().toLowerCase()
-      if (!key || byName.has(key)) continue
+      if (!key) continue
+      const gen = detectGender(c.name, c.description)
+      if (byName.has(key)) {
+        const charRow = existing.find((x) => String(x.name).trim().toLowerCase() === key)
+        if (charRow && gen !== 'unknown') {
+          const currentVoice = charRow.tts_voice as string | null
+          const currentGen = currentVoice ? geminiVoiceGender(currentVoice) : undefined
+          if (!currentVoice || (currentGen && currentGen !== gen)) {
+            const pool = gen === 'female' ? femalePool : malePool
+            const newVoice = pool[sort % pool.length]
+            db.prepare('UPDATE characters SET tts_voice = ? WHERE id = ?').run(newVoice, charRow.id)
+          }
+        }
+        continue
+      }
       const id = randomUUID()
-      db.prepare('INSERT INTO characters (id, project_id, name, description, sort) VALUES (?, ?, ?, ?, ?)').run(
+      const pool = gen === 'female' ? femalePool : malePool
+      const voice = pool[sort % pool.length]
+      db.prepare('INSERT INTO characters (id, project_id, name, description, sort, tts_voice, tts_provider) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
         id,
         projectId,
         c.name.trim(),
         c.description,
-        sort++
+        sort++,
+        voice,
+        proj?.tts_provider || 'gemini'
       )
       byName.set(key, id)
     }

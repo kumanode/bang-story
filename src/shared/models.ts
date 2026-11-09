@@ -83,6 +83,63 @@ export function geminiVoiceName(id: string): string {
   return GEMINI_LIBRARY_VOICES.find((v) => v.id === id)?.name ?? id
 }
 
+export const FEMALE_GEMINI_VOICES = [
+  'Kore',
+  'Aoede',
+  'Leda',
+  'Despina',
+  'Callirrhoe',
+  'Zephyr',
+  'Autonoe',
+  'Sulafat',
+  'Algieba',
+  'Erinome',
+  'Laomedeia',
+  'Achernar',
+  'Pulcherrima',
+  'Vindemiatrix',
+  'Sadachbia',
+  'Puck'
+]
+
+export const MALE_GEMINI_VOICES = [
+  'Fenrir',
+  'Orus',
+  'Charon',
+  'Alnilam',
+  'Gacrux',
+  'Schedar',
+  'Achird',
+  'Iapetus',
+  'Rasalgethi',
+  'Zubenelgenubi',
+  'Sadaltager',
+  'Algenib',
+  'Umbriel',
+  'Enceladus'
+]
+
+export function geminiVoiceGender(id: string): 'female' | 'male' | undefined {
+  if (FEMALE_GEMINI_VOICES.includes(id)) return 'female'
+  if (MALE_GEMINI_VOICES.includes(id)) return 'male'
+  return undefined
+}
+
+export function detectGender(name: string, description = ''): 'female' | 'male' | 'unknown' {
+  const text = `${name} ${description}`.toLowerCase()
+  const femaleMatches = text.match(/\b(female|woman|women|girl|mother|mom|sister|daughter|lady|queen|princess|witch|waitress|actress|heroine|perempuan|wanita|gadis|ibu|mama|putri|ratu|nenek|tante|mbak|nyonya|saudari)\b/g) || []
+  const maleMatches = text.match(/\b(male|man|men|boy|father|dad|brother|son|lord|king|prince|wizard|actor|hero|laki-laki|pria|cowok|ayah|bapak|papa|pangeran|raja|kakek|paman|om|mas|tuan|saudara)\b/g) || []
+
+  if (femaleMatches.length > maleMatches.length) return 'female'
+  if (maleMatches.length > femaleMatches.length) return 'male'
+
+  const trimmed = name.trim().toLowerCase()
+  if (/^(ibu|mbak|ny\.|mama|tante|kak)\b/i.test(trimmed)) return 'female'
+  if (/^(pak|bapak|mas|om|tn\.|papa|bang)\b/i.test(trimmed)) return 'male'
+
+  return 'unknown'
+}
+
 /** The 30 classic prebuilt voices. */
 export const GEMINI_VOICES: { id: string; tone: string }[] = [
   { id: 'Charon', tone: 'informatif' },

@@ -77,7 +77,8 @@ function ClipTab({ clip, index }: { clip: Clip; index: number }) {
   const videoJob = jobFor(jobs, 'video', { clipId: clip.id })
   const videoCamera = clip.videoCamera ?? 'static'
   // A camera change plays the clip in the preview at once, without moving the playhead.
-  const audition = (): void => useAudition.getState().start({ kind: 'clip', clipId: clip.id })
+  const [cancelingVideo, setCancelingVideo] = useState(false)
+    const audition = (): void => useAudition.getState().start({ kind: 'clip', clipId: clip.id })
   const setCamera = (patch: Partial<Clip>): void => {
     updateClip(clip.id, patch)
     audition()
@@ -170,8 +171,34 @@ function ClipTab({ clip, index }: { clip: Clip; index: number }) {
             >
               {video ? 'Buat ulang video' : 'Buat video'}
             </Button>
+            <Button
+              size="sm"
+              variant="secondary"
+              icon={<Mic className="size-4" />}
+              loading={isRunning(videoJob)}
+              disabled={!image}
+              title="Buat video AI dengan gerakan bibir sinkron suara dialog"
+              onClick={() => void run(() => window.api.generate.clipLipSync(clip.id))}
+            >
+              Video Lip Sync AI
+            </Button>
             {isRunning(videoJob) && (
-              <Button size="sm" variant="secondary" icon={<X className="size-3.5" />} onClick={() => void run(() => window.api.generate.cancel(videoJob!.id))}>
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<X className="size-3.5" />}
+                loading={cancelingVideo}
+                onClick={async () => {
+                  setCancelingVideo(true)
+                  try {
+                    await window.api.generate.cancel(videoJob!.id)
+                  } catch (e) {
+                    toast('error', errorText(e))
+                  } finally {
+                    setCancelingVideo(false)
+                  }
+                }}
+              >
                 Batalkan
               </Button>
             )}

@@ -2,11 +2,14 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   ArrowLeft,
   ArrowRight,
+  Bookmark,
   ChevronLeft,
   ChevronRight,
   Clapperboard,
+  Download,
   Film,
   Image as ImageIcon,
+  Mic,
   MoreHorizontal,
   Move,
   Pause,
@@ -24,11 +27,12 @@ import { effectiveResolution, fitDuration, getImageModel, getVideoModel } from '
 import { CAMERA_PRESETS, MOTION_STRENGTHS, cameraAt, cameraCss } from '@shared/motion'
 import { needsVisual } from '@shared/script'
 import { geminiVoiceName, geminiVoiceTone } from '@shared/models'
-import type { Asset, Clip } from '@shared/types'
+import type { Asset, Clip, Job, Project } from '@shared/types'
 import { AutoTextarea } from '../../components/AutoTextarea'
 import { CharacterAvatar } from '../../components/CharacterAvatar'
 import { ClipVisual } from '../../components/ClipVisual'
-import { Badge, Button, Chip, IconButton, Menu, Progress, Segmented, confirmDialog, cx, inputCls } from '../../components/ui'
+import { Badge, Button, Chip, IconButton, Menu, Modal, Progress, Segmented, confirmDialog, cx, inputCls } from '../../components/ui'
+import { Select } from '../../components/Select'
 import { clipNumber, errorText, mmss, secLabel } from '../../lib/format'
 import { useNarration } from '../../lib/useNarration'
 import { useApp } from '../../store/app'
@@ -124,6 +128,8 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
   const { toast } = useApp()
   const audio = useAudio()
   const [editPrompt, setEditPrompt] = useState(false)
+  const [cancelingVideo, setCancelingVideo] = useState(false)
+  const [savingThumb, setSavingThumb] = useState(false)
   if (!project) return null
 
   const image = clip.imageAssetId ? assets[clip.imageAssetId] : null
@@ -141,6 +147,8 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
     project.ttsProvider === 'gemini'
       ? `${geminiVoiceName(project.ttsVoice)} · ${geminiVoiceTone(project.ttsVoice) ?? 'Gemini'}`
       : 'ElevenLabs'
+
+  const isCover = project.coverAssetId === clip.imageAssetId
 
   const run = async (fn: () => Promise<unknown>): Promise<void> => {
     try {
@@ -161,8 +169,43 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
     if (ok) removeClip(clip.id)
   }
 
+  const saveThumb = async (): Promise<void> => {
+    setSavingThumb(true)
+    try {
+      const savedPath = await window.api.exporter.saveClipThumbnail(clip.id)
+      if (savedPath) toast('success', 'Thumbnail YouTube berhasil disimpan!')
+    } catch (e) {
+      toast('error', errorText(e))
+    } finally {
+      setSavingThumb(false)
+    }
+  }
+
+  const makeCover = async (): Promise<void> => {
+    try {
+      await window.api.projects.setCover(project.id, clip.id)
+      updateProject({ coverAssetId: clip.imageAssetId })
+      toast('success', 'Klip dijadikan sampul proyek!')
+    } catch (e) {
+      toast('error', errorText(e))
+    }
+  }
+
   // Capped by window height, so the settings under the fixed preview keep enough room.
   const aspect = project.aspectRatio === '9:16' ? 'aspect-[9/16] h-[min(300px,40vh)] mx-auto' : 'aspect-video h-[min(282px,36vh)] max-w-full mx-auto'
+
+  const menuItems = [
+    { label: 'Geser ke kiri', icon: <ArrowLeft className="size-4" />, run: () => moveClip(clip.id, -1) },
+    { label: 'Geser ke kanan', icon: <ArrowRight className="size-4" />, run: () => moveClip(clip.id, 1) },
+    { label: 'Tambah klip setelah ini', icon: <Plus className="size-4" />, run: () => addClip(clip.id) },
+    ...(project.aspectRatio === '16:9' && (image || video)
+      ? [
+          { label: 'Simpan thumbnail YouTube (1280×720 JPG)', icon: <Download className="size-4" />, run: () => void saveThumb() },
+          { label: isCover ? 'Sampul proyek saat ini' : 'Jadikan sampul proyek', icon: <Bookmark className="size-4" />, run: () => void makeCover() }
+        ]
+      : []),
+    { label: 'Hapus klip', icon: <Trash2 className="size-4" />, danger: true, run: () => void remove() }
+  ]
 
   return (
     <aside className="flex min-h-0 flex-col border-l border-line bg-surface">
@@ -190,12 +233,7 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
               <MoreHorizontal className="size-4" />
             </IconButton>
           )}
-          items={[
-            { label: 'Geser ke kiri', icon: <ArrowLeft className="size-4" />, run: () => moveClip(clip.id, -1) },
-            { label: 'Geser ke kanan', icon: <ArrowRight className="size-4" />, run: () => moveClip(clip.id, 1) },
-            { label: 'Tambah klip setelah ini', icon: <Plus className="size-4" />, run: () => addClip(clip.id) },
-            { label: 'Hapus klip', icon: <Trash2 className="size-4" />, danger: true, run: () => void remove() }
-          ]}
+          items={menuItems}
         />
       </div>
 
@@ -205,7 +243,7 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
           {image && !isRunning(imageJob) && clip.motionType === 'camera' ? (
             <MotionPreview image={image} clip={clip} />
           ) : (
-            <ClipVisual clip={clip} image={image} video={video} job={imageJob} large playVideo />
+            <ClipVisual clip={clip} image={image} video={video} job={imageJob || videoJob} large playVideo />
           )}
           {!image && !isRunning(imageJob) && (
             <div className="absolute inset-x-0 bottom-6 flex justify-center">
@@ -239,6 +277,38 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
       </div>
 
       <div className="scroll-thin flex min-h-0 flex-1 flex-col gap-4 overflow-y-auto px-5 py-4">
+        {project.aspectRatio === '16:9' && (image || video) && (
+          <div className="flex items-center justify-between rounded-xl border border-line bg-sand/60 px-3.5 py-2.5">
+            <div className="min-w-0 pr-2">
+              <div className="flex items-center gap-1.5">
+                <span className="text-xs font-semibold text-ink">Thumbnail YouTube</span>
+                {isCover && <Badge tone="ok">Sampul Proyek</Badge>}
+              </div>
+              <p className="truncate text-[11px] text-muted">Format 16:9 · Ekspor frame 1280×720 JPG</p>
+            </div>
+            <div className="flex shrink-0 items-center gap-1.5">
+              <Button
+                size="sm"
+                variant="secondary"
+                icon={<Download className="size-3.5" />}
+                loading={savingThumb}
+                onClick={() => void saveThumb()}
+              >
+                Simpan JPG
+              </Button>
+              {!isCover && clip.imageAssetId && (
+                <IconButton
+                  label="Jadikan sampul proyek"
+                  size={32}
+                  onClick={() => void makeCover()}
+                >
+                  <Bookmark className="size-3.5" />
+                </IconButton>
+              )}
+            </div>
+          </div>
+        )}
+
         <div className="flex flex-wrap gap-2">
           {image && (
             <Button
@@ -304,6 +374,28 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
             </div>
           </div>
         )}
+
+        <div className="flex flex-col gap-1.5">
+          <span className="text-sm font-semibold">Pembicara adegan</span>
+          <Select
+            label="Disuarakan oleh"
+            size="sm"
+            value={clip.speakerId ?? ''}
+            onChange={(id: string) => updateClip(clip.id, { speakerId: id || null })}
+            options={[
+              { value: '', label: `Narator proyek (${project.ttsVoice || 'Utama'})` },
+              ...characters.map((c) => ({
+                value: c.id,
+                label: `Tokoh: ${c.name}${c.ttsVoice ? ` (${c.ttsVoice})` : ''}`
+              }))
+            ]}
+          />
+          <p className="text-xs leading-relaxed text-muted">
+            {clip.speakerId
+              ? `Adegan ini dibawakan sebagai dialog karakter (${characters.find((c) => c.id === clip.speakerId)?.name ?? 'Tokoh'}).`
+              : `Adegan ini dibawakan oleh narator utama proyek.`}
+          </p>
+        </div>
 
         <div className="flex flex-col gap-1.5">
           <div className="flex items-center gap-2">
@@ -444,8 +536,34 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
                 >
                   {video ? 'Buat ulang video' : 'Buat video'}
                 </Button>
+                <Button
+                  size="sm"
+                  variant="secondary"
+                  icon={<Mic className="size-4" />}
+                  loading={isRunning(videoJob)}
+                  disabled={!image}
+                  title="Buat video AI yang gerakan bibirnya sinkron dengan suara narasi/dialog"
+                  onClick={() => void run(() => window.api.generate.clipLipSync(clip.id))}
+                >
+                  Video Lip Sync AI
+                </Button>
                 {isRunning(videoJob) && (
-                  <Button size="sm" variant="secondary" icon={<X className="size-3.5" />} onClick={() => void run(() => window.api.generate.cancel(videoJob!.id))}>
+                  <Button
+                    size="sm"
+                    variant="secondary"
+                    icon={<X className="size-3.5" />}
+                    loading={cancelingVideo}
+                    onClick={async () => {
+                      setCancelingVideo(true)
+                      try {
+                        await window.api.generate.cancel(videoJob!.id)
+                      } catch (e) {
+                        toast('error', errorText(e))
+                      } finally {
+                        setCancelingVideo(false)
+                      }
+                    }}
+                  >
                     Batalkan
                   </Button>
                 )}
@@ -466,6 +584,244 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
   )
 }
 
+function VideoSelectModal({
+  open,
+  onClose,
+  project,
+  clips,
+  assets,
+  jobs,
+  creditMap,
+  isFlow2Video,
+  onGenerate,
+  onGenerateLipSync
+}: {
+  open: boolean
+  onClose: () => void
+  project: Project
+  clips: Clip[]
+  assets: Record<string, Asset>
+  jobs: Record<string, Job>
+  creditMap: Map<number, number> | null
+  isFlow2Video: boolean
+  onGenerate: (clipIds: string[]) => Promise<void>
+  onGenerateLipSync?: (clipIds: string[]) => Promise<void>
+}) {
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
+  const [busy, setBusy] = useState(false)
+
+  // Pre-select clips that have an image and need video
+  useEffect(() => {
+    if (!open) return
+    const need = clips
+      .filter((c) => c.imageAssetId && !c.videoAssetId && !isRunning(jobFor(jobs, 'video', { clipId: c.id })))
+      .map((c) => c.id)
+    setSelectedIds(new Set(need.length ? need : clips.filter((c) => c.imageAssetId).map((c) => c.id)))
+  }, [open, clips])
+
+  const readyClips = useMemo(() => clips.filter((c) => c.imageAssetId), [clips])
+  const model = getVideoModel(project.videoModel)
+  const videoModelName = isFlow2Video
+    ? getFlow2ApiModel(project.videoModel, 'video').name
+    : model.name
+
+  const toggle = (id: string): void => {
+    const next = new Set(selectedIds)
+    if (next.has(id)) next.delete(id)
+    else next.add(id)
+    setSelectedIds(next)
+  }
+
+  const selectNeed = (): void => {
+    const ids = clips
+      .filter((c) => c.imageAssetId && !c.videoAssetId && !isRunning(jobFor(jobs, 'video', { clipId: c.id })))
+      .map((c) => c.id)
+    setSelectedIds(new Set(ids))
+  }
+
+  const selectWithAudio = (): void => {
+    const ids = clips
+      .filter((c) => c.imageAssetId && (c.audioAssetId || c.narration.trim()) && !isRunning(jobFor(jobs, 'video', { clipId: c.id })))
+      .map((c) => c.id)
+    setSelectedIds(new Set(ids))
+  }
+
+  const selectAllReady = (): void => {
+    setSelectedIds(new Set(readyClips.map((c) => c.id)))
+  }
+
+  const clearAll = (): void => {
+    setSelectedIds(new Set())
+  }
+
+  const selectedClips = clips.filter((c) => selectedIds.has(c.id))
+
+  const totalCredits = useMemo(() => {
+    if (isFlow2Video || !creditMap) return null
+    return selectedClips.reduce((n, c) => {
+      const sec = fitDuration(model, c.durationMs / 1000) ?? 5
+      return n + (creditMap.get(sec) ?? 0)
+    }, 0)
+  }, [selectedClips, isFlow2Video, creditMap, model])
+
+  const totalDurationMs = selectedClips.reduce((n, c) => n + c.durationMs, 0)
+
+  const handleStart = async (): Promise<void> => {
+    if (!selectedIds.size || busy) return
+    setBusy(true)
+    try {
+      await onGenerate([...selectedIds])
+      onClose()
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Modal
+      open={open}
+      onClose={busy ? () => {} : onClose}
+      title="Pilih Klip untuk Video AI"
+      subtitle={`Model: ${videoModelName} · Rasio: ${project.aspectRatio}`}
+      width={720}
+    >
+      <div className="flex flex-col gap-3.5 py-1">
+        <div className="flex flex-wrap items-center justify-between gap-2 border-b border-line pb-3">
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button size="sm" variant="secondary" onClick={selectNeed}>
+              Belum ada video
+            </Button>
+            <Button size="sm" variant="secondary" onClick={selectAllReady}>
+              Semua yang siap ({readyClips.length})
+            </Button>
+            <Button size="sm" variant="secondary" onClick={selectWithAudio}>
+              Ada dialog/audio
+            </Button>
+            <Button size="sm" variant="ghost" onClick={clearAll} disabled={selectedIds.size === 0}>
+              Kosongkan
+            </Button>
+          </div>
+          <span className="text-xs font-semibold text-ink-2">
+            {selectedIds.size} dari {clips.length} adegan dipilih
+          </span>
+        </div>
+
+        <div className="scroll-thin max-h-[50vh] space-y-2 overflow-y-auto pr-1">
+          {clips.map((c, i) => {
+            const hasImage = !!c.imageAssetId
+            const hasVideo = !!c.videoAssetId
+            const isVideoRunning = isRunning(jobFor(jobs, 'video', { clipId: c.id }))
+            const isChecked = selectedIds.has(c.id)
+            const disabled = !hasImage || isVideoRunning
+            const image = c.imageAssetId ? assets[c.imageAssetId] : null
+
+            return (
+              <div
+                key={c.id}
+                onClick={() => !disabled && toggle(c.id)}
+                className={cx(
+                  'flex items-center gap-3 rounded-xl border p-2.5 transition-colors',
+                  disabled
+                    ? 'cursor-not-allowed border-line/60 bg-sand/30 opacity-60'
+                    : isChecked
+                      ? 'cursor-pointer border-accent bg-accent-soft/40 shadow-xs'
+                      : 'cursor-pointer border-line bg-surface hover:border-line-3'
+                )}
+              >
+                <div className="flex size-5 shrink-0 items-center justify-center">
+                  <input
+                    type="checkbox"
+                    checked={isChecked}
+                    disabled={disabled}
+                    onChange={() => !disabled && toggle(c.id)}
+                    aria-label={`Pilih klip ${i + 1}`}
+                    className="size-4 rounded border-line-2 text-accent focus:ring-accent"
+                  />
+                </div>
+
+                <div className={cx('relative shrink-0 overflow-hidden rounded-lg border border-line bg-paper', project.aspectRatio === '9:16' ? 'h-14 w-8' : 'h-12 w-20')}>
+                  {image ? (
+                    <img src={image.url} alt="" className="size-full object-cover" />
+                  ) : (
+                    <div className="flex size-full items-center justify-center text-[10px] text-muted">Tanpa gambar</div>
+                  )}
+                </div>
+
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono text-xs font-bold text-ink">#{i + 1}</span>
+                    <span className="truncate text-sm font-semibold text-ink">{c.title || 'Tanpa judul'}</span>
+                  </div>
+                  <p className="truncate text-xs text-muted">{c.videoPrompt || c.story || c.narration || 'Tanpa arahan gerak'}</p>
+                </div>
+
+                <div className="flex shrink-0 items-center gap-2">
+                  <span className="font-mono text-xs text-muted">{mmss(c.durationMs)}</span>
+                  {isVideoRunning ? (
+                    <Badge tone="warn">Proses…</Badge>
+                  ) : hasVideo ? (
+                    <Badge tone="ok">Ada video</Badge>
+                  ) : !hasImage ? (
+                    <Badge tone="bad">Perlu gambar</Badge>
+                  ) : (
+                    <Badge tone="info">Siap</Badge>
+                  )}
+                </div>
+              </div>
+            )
+          })}
+        </div>
+
+        <div className="flex items-center justify-between border-t border-line pt-3">
+          <div className="flex flex-col text-xs text-ink-2">
+            <span className="font-medium">
+              Terpilih: <strong className="text-ink">{selectedIds.size} klip</strong> ({mmss(totalDurationMs)})
+            </span>
+            {!isFlow2Video && totalCredits != null && selectedIds.size > 0 && (
+              <span className="text-muted">Perkiraan biaya: ≈ {Math.round(totalCredits * 10) / 10} kredit Higgsfield</span>
+            )}
+          </div>
+          <div className="flex items-center gap-2">
+            <Button variant="secondary" onClick={onClose} disabled={busy}>
+              Batal
+            </Button>
+            {onGenerateLipSync && (
+              <Button
+                variant="secondary"
+                icon={<Mic className="size-4" />}
+                loading={busy}
+                disabled={selectedIds.size === 0 || busy}
+                title="Generate video AI yang gerakan bibirnya sinkron dengan suara dialog"
+                onClick={async () => {
+                  if (!selectedIds.size || busy) return
+                  setBusy(true)
+                  try {
+                    await onGenerateLipSync([...selectedIds])
+                    onClose()
+                  } finally {
+                    setBusy(false)
+                  }
+                }}
+              >
+                Generate Lip Sync ({selectedIds.size})
+              </Button>
+            )}
+            <Button
+              variant="primary"
+              icon={<Clapperboard className="size-4" />}
+              loading={busy}
+              disabled={selectedIds.size === 0 || busy}
+              onClick={() => void handleStart()}
+            >
+              Generate {selectedIds.size} Video AI
+            </Button>
+          </div>
+        </div>
+      </div>
+    </Modal>
+  )
+}
+
 export function StoryboardStep() {
   const { project, clips, characters, assets, jobs, selectedClipId, select, addClip, updateProject, flush, load } = useProject()
   const { toast } = useApp()
@@ -473,6 +829,9 @@ export function StoryboardStep() {
   const [openChar, setOpenChar] = useState<string | null>(null)
   const [credits, setCredits] = useState<number | null>(null)
   const [videoCredits, setVideoCredits] = useState<number | null>(null)
+  const [creditMap, setCreditMap] = useState<Map<number, number> | null>(null)
+  const [videoModalOpen, setVideoModalOpen] = useState(false)
+  const [cancellingAll, setCancellingAll] = useState(false)
   const [planning, setPlanning] = useState(false)
   const [planMessage, setPlanMessage] = useState('')
   const [visibleCount, setVisibleCount] = useState(48)
@@ -524,7 +883,7 @@ export function StoryboardStep() {
     const voices = clips.filter((c) => c.audioAssetId).length
     const needImg = clips.filter((c) => !c.imageAssetId && !isRunning(jobFor(jobs, 'image', { clipId: c.id }))).length
     const videoRunning = clips.filter((c) => isRunning(jobFor(jobs, 'video', { clipId: c.id }))).length
-    const needVideo = clips.filter((c) => !c.videoAssetId && !isRunning(jobFor(jobs, 'video', { clipId: c.id })))
+    const needVideo = clips.filter((c) => c.imageAssetId && !c.videoAssetId && !isRunning(jobFor(jobs, 'video', { clipId: c.id })))
     return { imgs, voices, needImg, videoRunning, needVideo, total: clips.reduce((n, c) => n + c.durationMs, 0) }
   }, [clips, jobs])
 
@@ -534,16 +893,26 @@ export function StoryboardStep() {
     const model = getVideoModel(project.videoModel)
     return stats.needVideo.map((c) => fitDuration(model, c.durationMs / 1000) ?? 5).join(',')
   }, [stats.needVideo, project?.videoModel, isFlow2Video])
+
   useEffect(() => {
-    if (!project || !videoLengths) return setVideoCredits(null)
+    if (!project || !videoLengths) {
+      setVideoCredits(null)
+      setCreditMap(null)
+      return
+    }
     const lengths = videoLengths.split(',').map(Number)
     const unique = [...new Set(lengths)]
     const model = getVideoModel(project.videoModel).id
     let live = true
     void Promise.all(unique.map((s) => window.api.generate.estimate('video', model, project.aspectRatio, s, project.videoResolution))).then((list) => {
       if (!live) return
-      if (list.some((e) => e?.credits == null)) return setVideoCredits(null)
+      if (list.some((e) => e?.credits == null)) {
+        setVideoCredits(null)
+        setCreditMap(null)
+        return
+      }
       const bySec = new Map(unique.map((s, i) => [s, list[i]!.credits]))
+      setCreditMap(bySec)
       setVideoCredits(lengths.reduce((n, s) => n + (bySec.get(s) ?? 0), 0))
     })
     return () => {
@@ -579,29 +948,11 @@ export function StoryboardStep() {
   }
 
   const narration = useNarration()
-  // Videos are made last: every clip has its picture, and the voice is final so each video matches its clip length.
   const readyForVideo =
     clips.length > 0 &&
-    clips.every((c) => c.imageAssetId) &&
+    clips.some((c) => c.imageAssetId) &&
     narration.voiced > 0 &&
-    narration.stale === 0 &&
     !narration.running
-  const makeVideos = async (): Promise<void> => {
-    const n = stats.needVideo.length
-    const videoModelName = isFlow2Video
-      ? getFlow2ApiModel(project!.videoModel, 'video').name
-      : getVideoModel(project!.videoModel).name
-    const ok = await confirmDialog({
-      title: `Jadikan ${n} klip video AI?`,
-      body:
-        `Setiap gambar klip dianimasikan dengan ${videoModelName}, panjangnya mengikuti suara narasi klip itu.` +
-        (!isFlow2Video && videoCredits != null ? ` Perkiraan biaya ${Math.round(videoCredits * 10) / 10} kredit Higgsfield.` : '') +
-        (project!.durationSec >= 600 ? ` Video ini memiliki ${clips.length} adegan dan prosesnya bisa lama.` : '') +
-        ' Klip yang sudah punya video tidak dibuat ulang.',
-      confirm: `Buat ${n} video`
-    })
-    if (ok) await bulk(() => window.api.generate.missingVideos(project!.id))
-  }
 
   // Scenes added or rewritten in the script since the last visual plan.
   const stale = clips.filter(needsVisual).length
@@ -620,63 +971,45 @@ export function StoryboardStep() {
     }
   }
 
-  if (!clips.length)
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-4 text-center">
-        <h2 className="font-display text-3xl font-bold">Storyboard masih kosong</h2>
-        <p className="max-w-md text-ink-2">Tulis naskahnya dulu di langkah Naskah, lalu buat visual tiap adegan. Kamu juga bisa menambah klip sendiri.</p>
-        <div className="flex gap-2.5">
-          <Button onClick={() => updateProject({ step: 2 })}>Ke Naskah</Button>
-          <Button variant="primary" icon={<Plus className="size-4" />} onClick={() => addClip(null)}>
-            Tambah klip
-          </Button>
-        </div>
-      </div>
-    )
-
   return (
-    <div className="grid h-full grid-rows-[64px_minmax(0,1fr)_80px]">
-      <div className="flex items-center gap-2 border-b border-line bg-paper px-6">
-        <span className="mr-1 text-[13px] font-semibold text-ink-2">Pemeran</span>
-        <div className="scroll-thin flex min-w-0 gap-2 overflow-x-auto py-1">
-          {characters.map((c) => {
-            const sheet = c.sheetAssetId ? assets[c.sheetAssetId] : null
-            const running = isRunning(jobFor(jobs, 'sheet', { characterId: c.id }))
-            return (
-              <button
-                key={c.id}
-                type="button"
-                onClick={() => setOpenChar(c.id)}
-                className="inline-flex h-10 shrink-0 items-center gap-2 rounded-full border border-line-2 bg-surface py-0 pl-1 pr-3 text-[13px] font-medium hover:border-ink-2"
-              >
-                <CharacterAvatar name={c.name} sheetUrl={sheet?.url} size={32} busy={running} />
-                {c.name}
-                {!sheet && !running && <span className="size-1.5 rounded-full bg-accent" title="Belum ada lembar karakter" />}
-              </button>
-            )
-          })}
-          <button
-            type="button"
-            onClick={() => setOpenChar('new')}
-            className="inline-flex h-10 shrink-0 items-center gap-1.5 rounded-full border border-dashed border-line-3 px-3.5 text-[13px] font-medium text-ink-2 hover:border-ink-2"
-          >
-            <Plus className="size-[15px]" />
-            Tambah pemeran
-          </button>
-        </div>
-        <div className="flex-1" />
+    <div className="flex h-full flex-col">
+      <div className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface px-6">
+        {characters.length > 0 && (
+          <div className="flex items-center gap-2 border-r border-line pr-4">
+            <span className="text-xs font-semibold text-muted">Tokoh:</span>
+            <div className="flex items-center gap-1.5">
+              {characters.map((c) => {
+                const sheet = c.sheetAssetId ? assets[c.sheetAssetId] : null
+                const running = isRunning(jobFor(jobs, 'sheet', { characterId: c.id }))
+                return (
+                  <button
+                    key={c.id}
+                    type="button"
+                    onClick={() => setOpenChar(c.id)}
+                    title={sheet ? `Lembar karakter ${c.name}` : `${c.name} belum punya lembar karakter`}
+                    className="relative flex items-center justify-center rounded-full transition-transform hover:scale-105"
+                  >
+                    <CharacterAvatar name={c.name} sheetUrl={sheet?.url} size={32} busy={running} />
+                    {!sheet && !running && <span className="size-1.5 rounded-full bg-accent" title="Belum ada gambar karakter" />}
+                  </button>
+                )
+              })}
+            </div>
+          </div>
+        )}
+
         <Button
+          className="border-[1.5px] border-ink font-semibold"
           icon={<Volume2 className="size-[17px]" />}
           loading={narration.running}
           disabled={narration.running || !clips.some((c) => c.narration.trim())}
-          title="Narasi semua adegan direkam dalam satu kali jalan lalu dipotong per adegan, supaya suara dan intonasinya konsisten."
           onClick={() => void narration.start()}
         >
           {narration.running
             ? `${narration.message ?? 'Membuat suara'} ${Math.round(narration.progress * 100)}%`
             : narration.voiced === 0
               ? 'Buat suara narasi'
-              : narration.stale
+              : narration.stale > 0
                 ? `Perbarui suara narasi (${narration.stale})`
                 : 'Rekam ulang suara narasi'}
         </Button>
@@ -691,25 +1024,49 @@ export function StoryboardStep() {
             <span className="font-normal text-ink-2">≈ {Math.round(credits * stats.needImg * 10) / 10} kr</span>
           )}
         </Button>
-        {readyForVideo && (
+
+        {stats.videoRunning > 0 ? (
+          <div className="flex items-center gap-2">
+            <Button
+              variant="primary"
+              icon={<Clapperboard className="size-[17px]" />}
+              loading
+              disabled
+            >
+              Membuat {stats.videoRunning} video
+            </Button>
+            <Button
+              variant="danger"
+              icon={<X className="size-4" />}
+              loading={cancellingAll}
+              onClick={async () => {
+                setCancellingAll(true)
+                try {
+                  await window.api.generate.cancelProject(project.id, 'video')
+                  toast('info', 'Semua proses video AI dibatalkan.')
+                } catch (e) {
+                  toast('error', errorText(e))
+                } finally {
+                  setCancellingAll(false)
+                }
+              }}
+            >
+              Batalkan semua
+            </Button>
+          </div>
+        ) : readyForVideo ? (
           <Button
             variant="primary"
             icon={<Clapperboard className="size-[17px]" />}
-            loading={stats.videoRunning > 0}
-            disabled={stats.videoRunning > 0 || stats.needVideo.length === 0}
-            title="Semua gambar dan suara narasi sudah siap. Setiap klip dijadikan video AI sepanjang suaranya."
-            onClick={() => void makeVideos()}
+            title="Pilih adegan untuk dianimasikan menjadi video AI sepanjang suaranya."
+            onClick={() => setVideoModalOpen(true)}
           >
-            {stats.videoRunning > 0
-              ? `Membuat ${stats.videoRunning} video`
-              : stats.needVideo.length === 0
-                ? 'Semua klip sudah video'
-                : `Jadikan ${stats.needVideo.length} video`}
-            {stats.videoRunning === 0 && videoCredits != null && stats.needVideo.length > 0 && (
+            {stats.needVideo.length === 0 ? 'Pilih video AI…' : `Jadikan ${stats.needVideo.length} video`}
+            {videoCredits != null && stats.needVideo.length > 0 && (
               <span className="font-normal text-white/80">≈ {Math.round(videoCredits * 10) / 10} kr</span>
             )}
           </Button>
-        )}
+        ) : null}
       </div>
 
       <div className="grid min-h-0 grid-cols-[minmax(0,1fr)_540px]">
@@ -739,10 +1096,22 @@ export function StoryboardStep() {
             {clips.slice(0, visibleCount).map((c, i) => {
               const on = c.id === sel?.id
               const imageJob = jobFor(jobs, 'image', { clipId: c.id })
+              const videoJob = jobFor(jobs, 'video', { clipId: c.id })
+              const isVideoJobRunning = isRunning(videoJob)
               const ttsRunning = isRunning(jobFor(jobs, 'tts', { clipId: c.id }))
               const voice = c.audioAssetId ? assets[c.audioAssetId] : null
               const synced = !!voice?.meta.words?.length && !voice.meta.estimatedTimings
-              const status = c.imageAssetId ? { label: 'Siap', tone: 'ok' as const } : isRunning(imageJob) ? { label: 'Proses', tone: 'warn' as const } : imageJob?.status === 'failed' ? { label: 'Gagal', tone: 'bad' as const } : { label: 'Draf', tone: 'draft' as const }
+              const status = isVideoJobRunning
+                ? { label: 'Video AI…', tone: 'warn' as const }
+                : c.videoAssetId
+                  ? { label: 'Video Siap', tone: 'ok' as const }
+                  : c.imageAssetId
+                    ? { label: 'Siap', tone: 'ok' as const }
+                    : isRunning(imageJob)
+                      ? { label: 'Proses', tone: 'warn' as const }
+                      : imageJob?.status === 'failed'
+                        ? { label: 'Gagal', tone: 'bad' as const }
+                        : { label: 'Draf', tone: 'draft' as const }
               return (
                 <button
                   key={c.id}
@@ -759,7 +1128,7 @@ export function StoryboardStep() {
                       clip={c}
                       image={c.imageAssetId ? assets[c.imageAssetId] : null}
                       video={c.videoAssetId ? assets[c.videoAssetId] : null}
-                      job={imageJob}
+                      job={imageJob || videoJob}
                     />
                     <div className="absolute left-2 top-2 flex items-center gap-1">
                       <span className="rounded-md bg-ink px-[7px] py-0.5 font-mono text-xs text-paper">{clipNumber(i)}</span>
@@ -790,6 +1159,11 @@ export function StoryboardStep() {
                     <span className="truncate text-sm font-semibold">{c.title || 'Tanpa judul'}</span>
                     <div className="flex items-center gap-2">
                       <Badge tone={status.tone}>{status.label}</Badge>
+                      {c.speakerId && (
+                        <span className="inline-flex max-w-[120px] items-center gap-1 truncate rounded bg-sand px-1.5 py-0.5 text-[11px] font-medium text-ink-2" title={`Disuarakan oleh: ${characters.find((ch) => ch.id === c.speakerId)?.name ?? 'Tokoh'}`}>
+                          🗣️ {characters.find((ch) => ch.id === c.speakerId)?.name ?? 'Tokoh'}
+                        </span>
+                      )}
                       <span className={cx('inline-flex items-center gap-1 text-xs', c.audioAssetId ? 'text-ok-ink' : 'text-muted')}>
                         <Volume2 className="size-3.5" />
                         {ttsRunning ? 'Membuat suara…' : c.audioAssetId ? 'Suara siap' : 'Belum ada suara'}
@@ -833,6 +1207,22 @@ export function StoryboardStep() {
         </Button>
       </footer>
       <CharacterModal characterId={openChar} onClose={() => setOpenChar(null)} onCreated={(id) => setOpenChar(id)} />
+      <VideoSelectModal
+        open={videoModalOpen}
+        onClose={() => setVideoModalOpen(false)}
+        project={project}
+        clips={clips}
+        assets={assets}
+        jobs={jobs}
+        creditMap={creditMap}
+        isFlow2Video={isFlow2Video}
+        onGenerate={async (clipIds) => {
+          await bulk(() => window.api.generate.clipsVideo(clipIds))
+        }}
+        onGenerateLipSync={async (clipIds) => {
+          await bulk(() => window.api.generate.clipsLipSync(clipIds))
+        }}
+      />
     </div>
   )
 }

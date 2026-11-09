@@ -164,12 +164,17 @@ export function videoBody(
   imageUrl: string,
   seconds: number,
   aspect: AspectRatio,
-  resolution?: string | null
+  resolution?: string | null,
+  audioUrl?: string | null
 ): Record<string, unknown> {
   const body = common(m, videoPrompt(m, prompt), aspect, resolution)
   const duration = fitDuration(m, seconds)
   if (duration != null) body.duration = duration
   if (m.input.field) body[m.input.field] = m.input.mode === 'reference' ? [imageUrl] : imageUrl
+  if (audioUrl) {
+    if (m.props.audio_url) body.audio_url = audioUrl
+    if (m.props.audio_urls) body.audio_urls = [audioUrl]
+  }
   return checkRequired(m, body)
 }
 

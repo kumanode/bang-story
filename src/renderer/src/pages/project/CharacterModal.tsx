@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { RefreshCw, Sparkles, Trash2, UserPlus } from 'lucide-react'
 import type { VoiceOption } from '@shared/types'
+import { geminiVoiceGender } from '@shared/models'
 import { Select } from '../../components/Select'
 import { Button, Field, Modal, Spinner, confirmDialog, cx, inputCls } from '../../components/ui'
 import { errorText } from '../../lib/format'
@@ -88,11 +89,15 @@ function NewCharacter({ onClose, onCreated }: { onClose: () => void; onCreated?:
             onChange={(v) => setTtsVoice(v)}
             options={[
               { value: '', label: `Bawaan narator (${project?.ttsVoice || 'Utama'})` },
-              ...voices.map((v) => ({
-                value: v.id,
-                label: v.name,
-                hint: v.description || undefined
-              }))
+              ...voices.map((v) => {
+                const gen = geminiVoiceGender(v.id)
+                const genTag = gen === 'female' ? 'Perempuan' : gen === 'male' ? 'Laki-laki' : ''
+                return {
+                  value: v.id,
+                  label: genTag ? `${v.name} (${genTag})` : v.name,
+                  hint: v.description || undefined
+                }
+              })
             ]}
           />
         </Field>
@@ -194,11 +199,15 @@ function EditCharacter({ characterId, onClose }: { characterId: string | null; o
             onChange={(v) => updateCharacter(c.id, { ttsVoice: v || null, ttsProvider: v ? project?.ttsProvider ?? null : null })}
             options={[
               { value: '', label: `Ikuti narator proyek (${project?.ttsVoice || 'Bawaan'})` },
-              ...voices.map((v) => ({
-                value: v.id,
-                label: v.name,
-                hint: v.description || undefined
-              }))
+              ...voices.map((v) => {
+                const gen = geminiVoiceGender(v.id)
+                const genTag = gen === 'female' ? 'Perempuan' : gen === 'male' ? 'Laki-laki' : ''
+                return {
+                  value: v.id,
+                  label: genTag ? `${v.name} (${genTag})` : v.name,
+                  hint: v.description || undefined
+                }
+              })
             ]}
           />
         </Field>

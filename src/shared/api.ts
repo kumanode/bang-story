@@ -41,6 +41,7 @@ export interface StudioApi {
     save(snapshot: ProjectSnapshot): Promise<{ updatedAt: number }>
     remove(id: string): Promise<void>
     duplicate(id: string): Promise<ProjectSummary>
+    setCover(projectId: string, clipId: string): Promise<{ coverAssetId: string }>
   }
   story: {
     /** Builds the complete editable chapter plan in one LLM request. */
@@ -56,7 +57,7 @@ export interface StudioApi {
     /** Idea → scene-by-scene script (story and voice-over), using the reviewed plan. */
     script(projectId: string): Promise<ProjectBundle>
     /** Revises one scene while preserving continuity with the surrounding story. */
-    reviseScene(projectId: string, clipId: string, instruction: string): Promise<{ story: string; narration: string }>
+    reviseScene(projectId: string, clipId: string, instruction: string): Promise<{ story: string; narration: string; speakerId?: string | null }>
     /** Script → one image plan per scene; "missing" skips scenes whose plan still matches their story. */
     visuals(projectId: string, mode: 'missing' | 'all'): Promise<ProjectBundle>
     /** A background-music prompt that fits the finished script, for use in Suno or another music AI. */
@@ -75,12 +76,16 @@ export interface StudioApi {
     missingImages(projectId: string): Promise<Job[]>
     /** An AI video for every clip that has an image but no video yet. */
     missingVideos(projectId: string): Promise<Job[]>
+    clipsVideo(clipIds: string[]): Promise<Job[]>
+    clipLipSync(clipId: string): Promise<Job>
+    clipsLipSync(clipIds: string[]): Promise<Job[]>
     missingTts(projectId: string): Promise<Job[]>
     /** Voices scenes in one continuous take and cuts it per scene: those without a voice, or all of them. */
     narration(projectId: string, mode: 'missing' | 'all'): Promise<Job>
     /** Re-times caption words of voiced scenes against the audio with the local Whisper model. */
     syncCaptions(projectId: string, mode?: 'stale' | 'all' | 'force'): Promise<Job>
     cancel(jobId: string): Promise<void>
+    cancelProject(projectId: string, kind?: string): Promise<void>
     /** Credits for one image, or one video of about `seconds`, with this model. Null without a working key. */
     estimate(kind: 'image' | 'video', modelId: string, aspect: AspectRatio, seconds?: number, resolution?: string | null): Promise<CreditEstimate | null>
   }
@@ -131,6 +136,7 @@ export interface StudioApi {
     reveal(path: string): Promise<void>
     /** Saves a thumbnail as a 1280×720 JPG through a save dialog; null when cancelled. */
     saveThumbnail(assetId: string, fileName: string): Promise<string | null>
+    saveClipThumbnail(clipId: string): Promise<string | null>
   }
   app: {
     openExternal(url: string): Promise<void>

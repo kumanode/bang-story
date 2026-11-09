@@ -187,7 +187,8 @@ async function streamCompletion(
       let value: Uint8Array | undefined
       try {
         ;({ done, value } = await reader.read())
-      } catch {
+      } catch (e) {
+        if (signal?.aborted) throw e
         throw new ApiError('Koneksi Flow2API terputus setelah generasi dimulai. Hasil mungkin belum diketahui dan permintaan tidak diulang otomatis; periksa server sebelum mencoba lagi.', 598)
       }
       if (done) {

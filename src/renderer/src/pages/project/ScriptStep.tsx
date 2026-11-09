@@ -6,6 +6,7 @@ import { VOICE_TAGS } from '@shared/speech'
 import type { Clip, LlmProvider } from '@shared/types'
 import { AutoTextarea } from '../../components/AutoTextarea'
 import { Badge, Button, IconButton, Menu, confirmDialog, cx, inputCls } from '../../components/ui'
+import { Select } from '../../components/Select'
 import { clipNumber, errorText, mmss } from '../../lib/format'
 import { useApp } from '../../store/app'
 import { useProject } from '../../store/project'
@@ -28,7 +29,7 @@ function InsertGap({ onInsert }: { onInsert: () => void }) {
 }
 
 function SceneCard({ clip, index, total, onInsert }: { clip: Clip; index: number; total: number; onInsert: () => void }) {
-  const { assets, updateClip, moveClip, removeClip, flush } = useProject()
+  const { project, characters, assets, updateClip, moveClip, removeClip, flush } = useProject()
   const { toast } = useApp()
   const [revisionOpen, setRevisionOpen] = useState(false)
   const [revisionRequest, setRevisionRequest] = useState('')
@@ -67,6 +68,7 @@ function SceneCard({ clip, index, total, onInsert }: { clip: Clip; index: number
       updateClip(clip.id, {
         story: result.story,
         narration: result.narration,
+        ...(result.speakerId !== undefined ? { speakerId: result.speakerId } : {}),
         ...(clip.audioAssetId ? {} : { durationMs: estimateNarrationMs(result.narration) })
       })
       setRevisionOpen(false)
@@ -174,6 +176,32 @@ function SceneCard({ clip, index, total, onInsert }: { clip: Clip; index: number
             className={cx(inputCls, 'py-2 text-sm leading-relaxed')}
           />
         </label>
+
+        <div className="flex flex-wrap items-center justify-between gap-2 rounded-lg bg-sand/40 px-3 py-2">
+          <div className="flex items-center gap-2">
+            <span className="text-xs font-semibold text-ink-2">Disuarakan oleh:</span>
+            <div className="w-56">
+              <Select
+                label="Disuarakan oleh"
+                size="sm"
+                value={clip.speakerId ?? ''}
+                onChange={(id: string) => updateClip(clip.id, { speakerId: id || null })}
+                options={[
+                  { value: '', label: `Narator utama (${project?.ttsVoice || 'Utama'})` },
+                  ...characters.map((c) => ({
+                    value: c.id,
+                    label: `Tokoh: ${c.name}${c.ttsVoice ? ` (${c.ttsVoice})` : ''}`
+                  }))
+                ]}
+              />
+            </div>
+          </div>
+          {clip.speakerId ? (
+            <Badge tone="info">Dialog Tokoh</Badge>
+          ) : (
+            <span className="text-[11px] text-muted">Narator Proyek</span>
+          )}
+        </div>
 
         <label className="group/narr flex flex-col gap-1">
           <span className="flex items-center gap-2 text-xs font-semibold text-ink-2">

@@ -25,12 +25,15 @@ import {
   generateClipTts,
   generateThumbnail,
   generateClipVideo,
+  generateClipsVideo,
+  generateClipLipSync,
+  generateClipsLipSync,
   generateMissingImages,
   generateMissingVideos,
   generateMissingTts,
   setActiveAsset
 } from './generation'
-import { cancelJob } from './jobs'
+import { cancelJob, cancelProjectJobs } from './jobs'
 import { generateNarration, syncCaptions } from './narration'
 import { cancelDownload, downloadModel, openModelFolder, removeModel, whisperStatus } from './whisper'
 import { assetAbsPath, sfxDir } from './paths'
@@ -48,6 +51,7 @@ import {
   patchClip,
   removeProject,
   saveSnapshot,
+  touchProject,
   updateAssetMeta
 } from './repo'
 import { BUILTIN_SFX } from '@shared/sfx'
@@ -98,6 +102,12 @@ export function registerIpc(): void {
     return removed
   })
   handle('projects:duplicate', (id: string) => duplicateProject(id))
+  handle('projects:setCover', (projectId: string, clipId: string) => {
+    const clip = getClip(clipId)
+    if (!clip.imageAssetId) throw new Error('Klip harus memiliki gambar agar bisa dijadikan sampul proyek.')
+    touchProject(projectId, { coverAssetId: clip.imageAssetId })
+    return { coverAssetId: clip.imageAssetId }
+  })
 
   handle('story:brief', (projectId: string) => generateBrief(projectId))
   handle('story:hooks', (projectId: string, brief?: StoryBrief) => generateHooks(projectId, brief ?? undefined))
@@ -129,6 +139,10 @@ export function registerIpc(): void {
   handle('generate:characterSheet', (characterId: string) => generateCharacterSheet(characterId))
   handle('generate:missingImages', (projectId: string) => generateMissingImages(projectId))
   handle('generate:missingVideos', (projectId: string) => generateMissingVideos(projectId))
+  handle('generate:clipsVideo', (clipIds: string[]) => generateClipsVideo(clipIds))
+  handle('generate:clipLipSync', (clipId: string) => generateClipLipSync(clipId))
+  handle('generate:clipsLipSync', (clipIds: string[]) => generateClipsLipSync(clipIds))
+  handle('generate:cancelProject', (projectId: string, kind?: string) => cancelProjectJobs(projectId, kind))
   handle('generate:missingTts', (projectId: string) => generateMissingTts(projectId))
   handle('generate:narration', (projectId: string, mode: 'missing' | 'all') => generateNarration(projectId, mode === 'all' ? 'all' : 'missing'))
   handle('generate:syncCaptions', (projectId: string, mode?: 'stale' | 'all' | 'force') => syncCaptions(projectId, mode === 'force' ? 'force' : mode === 'all' ? 'all' : 'stale'))
@@ -424,6 +438,27 @@ export function registerIpc(): void {
     if (res.canceled || !res.filePath) return null
     mkdirSync(dirname(res.filePath), { recursive: true })
     await toYoutubeThumbnail(assetAbsPath(asset.projectId, asset.localPath), res.filePath)
+    return res.filePath
+  })
+
+  handle('export:saveClipThumbnail', async (clipId: string) => {
+    const clip = getClip(clipId)
+    const project = getProject(clip.projectId)
+    const assetId = clip.videoAssetId || clip.imageAssetId
+    if (!assetId) throw new Error('Klip ini belum memiliki gambar atau video untuk dijadikan thumbnail.')
+    const asset = getAsset(assetId)
+    if (!asset) throw new Error('Aset visual klip tidak ditemukan.')
+    const win = BrowserWindow.getFocusedWindow()
+    const safeProject = String(project.title || 'video').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 40) || 'video'
+    const safeClip = String(clip.title || `klip-${clip.sort + 1}`).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 30) || 'klip'
+    const res = await dialog.showSaveDialog(win!, {
+      title: 'Simpan Thumbnail YouTube',
+      defaultPath: join(defaultExportFolder(), `${safeProject}-${safeClip}-thumbnail.jpg`),
+      filters: [{ name: 'Gambar JPG', extensions: ['jpg'] }]
+    })
+    if (res.canceled || !res.filePath) return null
+    mkdirSync(dirname(res.filePath), { recursive: true })
+    await toYoutubeThumbnail(assetAbsPath(project.id, asset.localPath), res.filePath)
     return res.filePath
   })
 

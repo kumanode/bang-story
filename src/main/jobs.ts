@@ -1,4 +1,5 @@
 import type { Job } from '@shared/types'
+import { getDb } from './db'
 import { emit } from './events'
 import { getJobRaw, updateJob } from './repo'
 import { cancelRequest } from './services/higgsfield'
@@ -22,18 +23,30 @@ const running: Record<QueueName, number> = { higgsfield: 0, flow2api: 0, tts: 0,
 const waiting: Record<QueueName, (() => void)[]> = { higgsfield: [], flow2api: [], tts: [], whisper: [], export: [] }
 const controllers = new Map<string, AbortController>()
 
-function acquire(q: QueueName): Promise<void> {
+function acquire(q: QueueName, signal?: AbortSignal): Promise<void> {
   const limit = q === 'higgsfield' ? getSettings().higgsfieldConcurrency : q === 'flow2api' ? getSettings().flow2apiConcurrency : FIXED_LIMITS[q]
+  if (signal?.aborted) return Promise.reject(new Error('Dibatalkan'))
   if (running[q] < limit) {
     running[q]++
     return Promise.resolve()
   }
-  return new Promise((resolve) =>
-    waiting[q].push(() => {
+  return new Promise<void>((resolve, reject) => {
+    let onAbort: (() => void) | undefined
+    const runNext = () => {
+      if (onAbort && signal) signal.removeEventListener('abort', onAbort)
       running[q]++
       resolve()
-    })
-  )
+    }
+    if (signal) {
+      onAbort = () => {
+        const idx = waiting[q].indexOf(runNext)
+        if (idx !== -1) waiting[q].splice(idx, 1)
+        reject(new Error('Dibatalkan'))
+      }
+      signal.addEventListener('abort', onAbort, { once: true })
+    }
+    waiting[q].push(runNext)
+  })
 }
 
 function release(q: QueueName): void {
@@ -63,14 +76,13 @@ export function runJob(job: Job, queue: QueueName, task: Task): Job {
     }
   }
   void (async () => {
-    await acquire(queue)
-    if (ctrl.signal.aborted) {
-      release(queue)
-      controllers.delete(job.id)
-      emit.job(updateJob(job.id, { status: 'canceled', message: null }))
-      return
-    }
+    let acquired = false
     try {
+      await acquire(queue, ctrl.signal)
+      acquired = true
+      if (ctrl.signal.aborted) {
+        throw new Error('Dibatalkan')
+      }
       console.info('[job] queue wait completed', { kind: job.kind, provider: job.provider, elapsedMs: Date.now() - queuedAt })
       emit.job(updateJob(job.id, { status: 'running', progress: 0.02 }))
       const result = await task(ctx)
@@ -78,7 +90,7 @@ export function runJob(job: Job, queue: QueueName, task: Task): Job {
         typeof result === 'string' ? { resultAssetId: result, message: null } : { message: result?.message ?? null }
       emit.job(updateJob(job.id, { status: 'done', progress: 1, ...extra }))
     } catch (e) {
-      const canceled = ctrl.signal.aborted
+      const canceled = ctrl.signal.aborted || (e as Error)?.message === 'Dibatalkan'
       emit.job(
         updateJob(job.id, {
           status: canceled ? 'canceled' : 'failed',
@@ -88,7 +100,7 @@ export function runJob(job: Job, queue: QueueName, task: Task): Job {
       )
       if (!canceled) console.error(`[job ${job.kind}]`, e)
     } finally {
-      release(queue)
+      if (acquired) release(queue)
       controllers.delete(job.id)
     }
   })()
@@ -98,10 +110,23 @@ export function runJob(job: Job, queue: QueueName, task: Task): Job {
 export async function cancelJob(id: string): Promise<void> {
   const raw = getJobRaw(id)
   if (!raw) return
-  if (raw.remote_id && raw.provider === 'higgsfield') await cancelRequest(raw.remote_id)
   const ctrl = controllers.get(id)
   if (ctrl) ctrl.abort()
-  else if (raw.status === 'queued' || raw.status === 'running') emit.job(updateJob(id, { status: 'canceled', message: null }))
+  if (raw.status === 'queued' || raw.status === 'running') {
+    emit.job(updateJob(id, { status: 'canceled', message: null }))
+  }
+  if (raw.remote_id && raw.provider === 'higgsfield') {
+    void cancelRequest(raw.remote_id).catch(() => {})
+  }
+}
+
+export async function cancelProjectJobs(projectId: string, kind?: string): Promise<void> {
+  const rows = (
+    kind
+      ? getDb().prepare(`SELECT id FROM jobs WHERE project_id = ? AND kind = ? AND status IN ('queued', 'running')`).all(projectId, kind)
+      : getDb().prepare(`SELECT id FROM jobs WHERE project_id = ? AND status IN ('queued', 'running')`).all(projectId)
+  ) as { id: string }[]
+  await Promise.all(rows.map((r) => cancelJob(r.id)))
 }
 
 export function isActive(id: string): boolean {

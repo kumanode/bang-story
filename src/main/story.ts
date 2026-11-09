@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto'
 import { CAMERA_PRESETS, MOTION_STRENGTHS, TRANSITIONS } from '@shared/motion'
 import { formatChapters } from '@shared/chapters'
-import { LANGUAGES, clipCountFor } from '@shared/models'
+import { LANGUAGES, clipCountFor, detectGender, FEMALE_GEMINI_VOICES, MALE_GEMINI_VOICES } from '@shared/models'
 import { estimateNarrationMs, needsVisual, wordCount } from '@shared/script'
 import { getStyle } from '@shared/styles'
 import type {
@@ -27,6 +27,7 @@ import { splitNarration } from './narrationSplit'
 import { generateJson } from './services/llm'
 import { emit } from './events'
 import { getSettings, setSettings } from './settings'
+import { getDb } from './db'
 import { STORY_STYLE_IDS } from '@shared/storyStyles'
 import { styleFromBrief, styleGuidance } from './storyStyles'
 import { checkChapterStyle } from './styleCheck'
@@ -438,9 +439,11 @@ const SCENE_NOTES_SCHEMA = {
         additionalProperties: false,
         properties: {
           title: { type: 'string', description: 'Short scene title in the target language.' },
-          story: { type: 'string', description: 'One concrete sentence of what is on screen: who or what, where, doing what.' }
+          story: { type: 'string', description: 'One concrete sentence of what is on screen: who or what, where, doing what.' },
+          speaker: { type: 'string', description: 'Name of the character speaking in this scene, or empty for narrator.' },
+          speakerGender: { type: 'string', enum: ['female', 'male', 'unknown'], description: 'Gender of the speaker: "female" for women/girls, "male" for men/boys, or "unknown" for narrator/unspecified.' }
         },
-        required: ['title', 'story']
+        required: ['title', 'story', 'speaker', 'speakerGender']
       }
     }
   },
@@ -473,17 +476,19 @@ const REVISED_SCENE_SCHEMA = {
   additionalProperties: false,
   properties: {
     story: { type: 'string', description: 'One concrete sentence of what is on screen in this scene.' },
-    narration: { type: 'string', description: 'Natural voice-over in the target language, sized for this scene.' }
+    narration: { type: 'string', description: 'Natural voice-over in the target language, sized for this scene.' },
+    speaker: { type: 'string', description: 'Name of the character speaking in this scene, or empty for narrator.' },
+    speakerGender: { type: 'string', enum: ['female', 'male', 'unknown'], description: 'Gender of the speaker: "female" for women/girls, "male" for men/boys, or "unknown" for narrator/unspecified.' }
   },
-  required: ['story', 'narration']
+  required: ['story', 'narration', 'speaker', 'speakerGender']
 }
 
-interface DraftScene { title: string; story: string; narration: string }
+interface DraftScene { title: string; story: string; narration: string; speaker?: string; speakerGender?: 'female' | 'male' | 'unknown' }
 
 interface PendingScript {
   fingerprint: string
   drafts: Map<number, string>
-  notes: Map<number, { title?: string; story?: string }[]>
+  notes: Map<number, { title?: string; story?: string; speaker?: string; speakerGender?: 'female' | 'male' | 'unknown' }[]>
 }
 
 // If a model call fails, finished stages stay available for the user's next retry in this app session.
@@ -498,6 +503,7 @@ function draftSystem(brief: StoryBrief, plan: StoryPlan, lang: string): string {
   const settings = getSettings()
   return [
     'You are a scriptwriter for faceless YouTube videos. Write an oral narration in the creator\'s chosen style: direct, concrete, easy to say aloud, with no headings, no lists, and no stage directions.',
+    'When the idea or outline involves character dialogues or conversations between characters, write natural spoken dialogue lines for the characters, alternating turns where appropriate.',
     FORMAT_GUIDE[brief.format],
     factRule(brief),
     `Narration style recipe:\n${styleGuidance(plan.style, settings.storyStyleProfiles, plan.styleProfileId)}`,
@@ -615,9 +621,10 @@ async function repairStyleChapters(project: Project, plan: StoryPlan, brief: Sto
 async function writeSceneNotes(project: Project, plan: StoryPlan, brief: StoryBrief, pending: PendingScript, scenes: { act: number; narration: string }[]): Promise<DraftScene[]> {
   const lang = languageOf(project.language)
   const system = [
-    'You are a storyboard writer for faceless YouTube videos. For each numbered voice-over segment, write a short scene title and a story note.',
+    'You are a storyboard writer for faceless YouTube videos. For each numbered voice-over segment, write a short scene title, a story note, and identify who speaks.',
     'The story note is one concrete sentence of what is on screen: who or what, where, doing what. It must match the segment and the brief.',
     'Never describe the narration itself, as in "the narrator explains"; describe the picture.',
+    'If the segment is spoken by a specific character (dialogue/conversation), set "speaker" to that character\'s name and "speakerGender" to their gender ("female" for women/girls, "male" for men/boys). If it is general narration or third-person storytelling, set "speaker" to empty string "" and "speakerGender" to "unknown".',
     factRule(brief),
     `Write in ${lang}. Return exactly one entry per segment, in order.`
   ].join(' ')
@@ -628,7 +635,7 @@ async function writeSceneNotes(project: Project, plan: StoryPlan, brief: StoryBr
     if (!rows) {
       emit.storyProgress({ projectId: project.id, message: `Menyusun adegan ${from + 1}–${from + slice.length} dari ${scenes.length}` })
       const listed = slice.map((s, i) => `${from + i + 1}. [Chapter ${s.act + 1}: ${plan.acts[s.act].title}] ${s.narration}`).join('\n')
-      const result = await generateJson<{ scenes?: { title?: string; story?: string }[] }>({
+      const result = await generateJson<{ scenes?: { title?: string; story?: string; speaker?: string; speakerGender?: 'female' | 'male' | 'unknown' }[] }>({
         system,
         prompt: `Creator idea (primary source of truth):\n${project.synopsis}\n\nChapter plan:\n${outlineText(plan.acts)}\n\nQuestion: ${plan.question}\n\nAvoid:\n${(plan.avoid ?? []).join('; ')}\n\nVideo title: ${plan.title || project.title}\n\nSegments:\n${listed}`,
         schema: SCENE_NOTES_SCHEMA,
@@ -637,23 +644,24 @@ async function writeSceneNotes(project: Project, plan: StoryPlan, brief: StoryBr
       rows = result.scenes ?? []
       pending.notes.set(g, rows)
     }
-    slice.forEach((s, i) => out.push({ title: str(rows?.[i]?.title) || `Adegan ${from + i + 1}`, story: str(rows?.[i]?.story), narration: s.narration }))
+    slice.forEach((s, i) => out.push({ title: str(rows?.[i]?.title) || `Adegan ${from + i + 1}`, story: str(rows?.[i]?.story), narration: s.narration, speaker: str(rows?.[i]?.speaker), speakerGender: rows?.[i]?.speakerGender === 'female' ? 'female' : rows?.[i]?.speakerGender === 'male' ? 'male' : 'unknown' }))
   }
   return out
 }
 
 /** Rewrites one scene with its neighbours as context; shared by the review pass and the creator's revise action. */
-async function rewriteScene(project: Project, brief: StoryBrief | null, scenes: DraftScene[], index: number, instruction: string): Promise<{ story: string; narration: string }> {
+async function rewriteScene(project: Project, brief: StoryBrief | null, scenes: DraftScene[], index: number, instruction: string): Promise<{ story: string; narration: string; speaker: string; speakerGender: 'female' | 'male' | 'unknown' }> {
   const lang = languageOf(project.language)
   const scene = scenes[index]
   const from = Math.max(0, index - 1)
-  const context = scenes.slice(from, index + 2).map((c, i) => `${from + i + 1}. ${c.title}\nStory: ${c.story}\nNarration: ${c.narration}`).join('\n\n')
+  const context = scenes.slice(from, index + 2).map((c, i) => `${from + i + 1}. ${c.title}\nStory: ${c.story}\nNarration: ${c.narration}${c.speaker ? `\nSpeaker: ${c.speaker}` : ''}`).join('\n\n')
   const plan = project.storyPlan ? normalizeStoryPlan(project.storyPlan, project.synopsis) : null
-  const result = await generateJson<{ story?: string; narration?: string }>({
+  const result = await generateJson<{ story?: string; narration?: string; speaker?: string; speakerGender?: 'female' | 'male' | 'unknown' }>({
     system: [
       'You are a script editor revising one scene in a faceless YouTube video.',
       'Follow the instruction while preserving established facts, names, continuity, and the neighbouring scenes.',
       'Keep the narration natural to speak, flowing from the previous scene into the next, and close to the original length. Do not alter the rest of the story.',
+      'If the scene is spoken by a specific character (dialogue), provide their name in "speaker". Otherwise, set "speaker" to empty string "".',
       brief ? factRule(brief) : '',
       index === 0 && plan?.customOpening ? `This is the opening scene; keep its narration starting with this exact creator-written sentence: ${plan.customOpening}` : '',
       `Write the replacement story note and narration in ${lang}.`
@@ -667,13 +675,13 @@ async function rewriteScene(project: Project, brief: StoryBrief | null, scenes: 
       plan?.closing && `Closing payoff: ${plan.closing}`,
       plan?.acts.length && `Reviewed outline:\n${outlineText(plan.acts)}`,
       `Context around the selected scene:\n${context}`,
-      `Selected scene to revise:\n${index + 1}. ${scene.title}\nStory: ${scene.story}\nNarration: ${scene.narration}`,
+      `Selected scene to revise:\n${index + 1}. ${scene.title}\nStory: ${scene.story}\nNarration: ${scene.narration}${scene.speaker ? `\nSpeaker: ${scene.speaker}` : ''}`,
       `Instruction: ${instruction}`
     ].filter(Boolean).join('\n\n'),
     schema: REVISED_SCENE_SCHEMA,
     name: 'revise-scene'
   })
-  return { story: str(result.story), narration: str(result.narration) }
+  return { story: str(result.story), narration: str(result.narration), speaker: str(result.speaker), speakerGender: result.speakerGender === 'female' ? 'female' : result.speakerGender === 'male' ? 'male' : 'unknown' }
 }
 
 /** One editor pass that catches what drafting misses: absent brief points, repeats, and scenes that talk about the topic instead of delivering it. */
@@ -775,13 +783,20 @@ export async function generateScript(projectId: string): Promise<ProjectBundle> 
   replaceScript(
     projectId,
     plan.title || project.title,
-    kept.map((c, i) => ({ title: c.title || `Adegan ${i + 1}`, story: c.story, narration: c.narration, durationMs: estimateNarrationMs(c.narration) }))
+    kept.map((c, i) => ({
+      title: c.title || `Adegan ${i + 1}`,
+      story: c.story,
+      narration: c.narration,
+      durationMs: estimateNarrationMs(c.narration),
+      speaker: c.speaker || null,
+      gender: c.speakerGender || null
+    }))
   )
   return getBundle(projectId)
 }
 
 /** Rewrites one scene with nearby context so edits still fit the brief, hook, and act outline. */
-export async function reviseScene(projectId: string, clipId: string, instruction: string): Promise<{ story: string; narration: string }> {
+export async function reviseScene(projectId: string, clipId: string, instruction: string): Promise<{ story: string; narration: string; speakerId?: string | null }> {
   const project = getProject(projectId)
   const clips = clipsOf(projectId)
   const index = clips.findIndex((c) => c.id === clipId)
@@ -789,10 +804,41 @@ export async function reviseScene(projectId: string, clipId: string, instruction
   const request = str(instruction)
   if (!request) throw new Error('Tulis perubahan yang kamu inginkan dulu.')
   const brief = project.storyPlan?.brief ? normalizeBrief(project.storyPlan.brief) : null
-  const scenes = clips.map((c) => ({ title: c.title, story: c.story, narration: c.narration }))
-  const { story, narration } = await rewriteScene(project, brief, scenes, index, request)
+  const scenes = clips.map((c) => ({ title: c.title, story: c.story, narration: c.narration, speaker: (charactersOf(projectId).find((ch) => ch.id === c.speakerId)?.name) ?? '' }))
+  const { story, narration, speaker, speakerGender } = await rewriteScene(project, brief, scenes, index, request)
   if (!story || !narration) throw new Error('AI belum menghasilkan revisi adegan yang lengkap. Coba lagi.')
-  return { story, narration }
+
+  let speakerId: string | null | undefined = undefined
+  if (speaker !== undefined) {
+    const sp = speaker.trim()
+    if (!sp) {
+      speakerId = null
+    } else {
+      const existing = charactersOf(projectId)
+      const match = existing.find((c) => c.name.trim().toLowerCase() === sp.toLowerCase())
+      if (match) {
+        speakerId = match.id
+      } else {
+        const gen = speakerGender === 'female' || speakerGender === 'male' ? speakerGender : detectGender(sp)
+        const pool = (gen === 'female' ? FEMALE_GEMINI_VOICES : MALE_GEMINI_VOICES).filter((v) => v !== project.ttsVoice)
+        const voice = pool[existing.length % pool.length]
+        const id = randomUUID()
+        const db = getDb()
+        db.prepare('INSERT INTO characters (id, project_id, name, description, sort, tts_voice, tts_provider) VALUES (?, ?, ?, ?, ?, ?, ?)').run(
+          id,
+          projectId,
+          sp,
+          `Tokoh (${gen === 'female' ? 'Perempuan' : gen === 'male' ? 'Laki-laki' : 'Tokoh'}): ${sp}`,
+          existing.length,
+          voice,
+          project.ttsProvider
+        )
+        speakerId = id
+      }
+    }
+  }
+
+  return { story, narration, ...(speakerId !== undefined ? { speakerId } : {}) }
 }
 
 // ---------- step 2 → 3: visuals for the reviewed script ----------

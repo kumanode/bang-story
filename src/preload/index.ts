@@ -21,7 +21,8 @@ const api: StudioApi = {
     get: call('projects:get'),
     save: call('projects:save'),
     remove: call('projects:remove'),
-    duplicate: call('projects:duplicate')
+    duplicate: call('projects:duplicate'),
+    setCover: call('projects:setCover')
   },
   story: {
     chapterPlan: call('story:chapterPlan'),
@@ -44,10 +45,14 @@ const api: StudioApi = {
     characterSheet: call('generate:characterSheet'),
     missingImages: call('generate:missingImages'),
     missingVideos: call('generate:missingVideos'),
+    clipsVideo: call('generate:clipsVideo'),
+    clipLipSync: call('generate:clipLipSync'),
+    clipsLipSync: call('generate:clipsLipSync'),
     missingTts: call('generate:missingTts'),
     narration: call('generate:narration'),
     syncCaptions: call('generate:syncCaptions'),
     cancel: call('generate:cancel'),
+    cancelProject: call('generate:cancelProject'),
     estimate: call('generate:estimate')
   },
   clips: {
@@ -87,7 +92,8 @@ const api: StudioApi = {
     defaultFolder: call('export:defaultFolder'),
     pickFolder: call('export:pickFolder'),
     reveal: call('export:reveal'),
-    saveThumbnail: call('export:saveThumbnail')
+    saveThumbnail: call('export:saveThumbnail'),
+    saveClipThumbnail: call('export:saveClipThumbnail')
   },
   app: {
     openExternal: call('app:openExternal'),
