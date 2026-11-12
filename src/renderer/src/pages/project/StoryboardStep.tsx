@@ -9,7 +9,6 @@ import {
   Download,
   Film,
   Image as ImageIcon,
-  Mic,
   MoreHorizontal,
   Move,
   Pause,
@@ -132,6 +131,7 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
   const [savingThumb, setSavingThumb] = useState(false)
   if (!project) return null
 
+  const isFlow2Video = FLOW2API_VIDEO_MODELS.some((model) => model.id === project.videoModel)
   const image = clip.imageAssetId ? assets[clip.imageAssetId] : null
   const video = clip.videoAssetId ? assets[clip.videoAssetId] : null
   const voice = clip.audioAssetId ? assets[clip.audioAssetId] : null
@@ -448,7 +448,7 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
             {(
               [
                 { id: 'camera', title: 'Gerak kamera', sub: 'Gratis · dirender di komputer', icon: <Move className="size-[22px]" />, subCls: 'text-ok-ink' },
-                { id: 'video', title: 'Video AI', sub: 'Higgsfield · pakai kredit', icon: <Film className="size-[22px]" />, subCls: 'text-ink-2' }
+                { id: 'video', title: 'Video AI', sub: '', icon: <Film className="size-[22px]" />, subCls: 'text-ink-2' }
               ] as const
             ).map((o) => {
               const on = clip.motionType === o.id
@@ -466,7 +466,9 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
                   {o.icon}
                   <span className="flex flex-col">
                     <span className="text-sm font-semibold">{o.title}</span>
-                    <span className={cx('text-xs', o.subCls)}>{o.sub}</span>
+                    <span className={cx('text-xs', o.subCls)}>
+                      {o.id === 'camera' ? o.sub : `${isFlow2Video ? 'Flow2API' : 'Higgsfield'}${isFlow2Video ? '' : ' · pakai kredit'}`}
+                    </span>
                   </span>
                 </button>
               )
@@ -536,17 +538,6 @@ function ClipPanel({ clip, index, total }: { clip: Clip; index: number; total: n
                 >
                   {video ? 'Buat ulang video' : 'Buat video'}
                 </Button>
-                <Button
-                  size="sm"
-                  variant="secondary"
-                  icon={<Mic className="size-4" />}
-                  loading={isRunning(videoJob)}
-                  disabled={!image}
-                  title="Buat video AI yang gerakan bibirnya sinkron dengan suara narasi/dialog"
-                  onClick={() => void run(() => window.api.generate.clipLipSync(clip.id))}
-                >
-                  Video Lip Sync AI
-                </Button>
                 {isRunning(videoJob) && (
                   <Button
                     size="sm"
@@ -593,8 +584,7 @@ function VideoSelectModal({
   jobs,
   creditMap,
   isFlow2Video,
-  onGenerate,
-  onGenerateLipSync
+  onGenerate
 }: {
   open: boolean
   onClose: () => void
@@ -605,7 +595,6 @@ function VideoSelectModal({
   creditMap: Map<number, number> | null
   isFlow2Video: boolean
   onGenerate: (clipIds: string[]) => Promise<void>
-  onGenerateLipSync?: (clipIds: string[]) => Promise<void>
 }) {
   const [selectedIds, setSelectedIds] = useState<Set<string>>(() => new Set())
   const [busy, setBusy] = useState(false)
@@ -786,27 +775,6 @@ function VideoSelectModal({
             <Button variant="secondary" onClick={onClose} disabled={busy}>
               Batal
             </Button>
-            {onGenerateLipSync && (
-              <Button
-                variant="secondary"
-                icon={<Mic className="size-4" />}
-                loading={busy}
-                disabled={selectedIds.size === 0 || busy}
-                title="Generate video AI yang gerakan bibirnya sinkron dengan suara dialog"
-                onClick={async () => {
-                  if (!selectedIds.size || busy) return
-                  setBusy(true)
-                  try {
-                    await onGenerateLipSync([...selectedIds])
-                    onClose()
-                  } finally {
-                    setBusy(false)
-                  }
-                }}
-              >
-                Generate Lip Sync ({selectedIds.size})
-              </Button>
-            )}
             <Button
               variant="primary"
               icon={<Clapperboard className="size-4" />}
@@ -1240,9 +1208,6 @@ export function StoryboardStep() {
         isFlow2Video={isFlow2Video}
         onGenerate={async (clipIds) => {
           await bulk(() => window.api.generate.clipsVideo(clipIds))
-        }}
-        onGenerateLipSync={async (clipIds) => {
-          await bulk(() => window.api.generate.clipsLipSync(clipIds))
         }}
       />
     </div>

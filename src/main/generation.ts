@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { dirname } from 'node:path'
 import { estimateWordTimings } from '@shared/captions'
 import { stripVoiceTags } from '@shared/speech'
-import { LIP_SYNC_FALLBACK_MODEL, getImageModel, getVideoModel, imageBody, maxRefs, promptLimit, resolutionOptions, videoBody, type HfModel } from '@shared/higgsfield'
+import { getImageModel, getVideoModel, imageBody, maxRefs, promptLimit, resolutionOptions, videoBody, type HfModel } from '@shared/higgsfield'
 import { getStyle, NO_TEXT } from '@shared/styles'
 import type { AspectRatio, Asset, Character, Clip, CreditEstimate, Job, Project, ThumbnailRequest, WordTiming } from '@shared/types'
 import { getDb } from './db'
@@ -572,7 +572,6 @@ export function generateClipVideo(clipId: string): Job {
       `${splitAvoid(fresh.visualPrompt).scene.replace(/\.$/, '')}. Subtle natural motion of the characters and environment, the camera slowly pushes in. Keep the art style of the first frame.`
     if (model.input.mode === 'reference')
       prompt = `Open on the exact scene of the reference image and keep its art style, characters and composition. ${prompt}`
-    // No audio here: a speech track makes audio-capable models animate mouths, which only Lip Sync asks for.
     return {
       endpoint: model.id,
       body: videoBody(model, prompt, url, fresh.durationMs / 1000, project.aspectRatio, project.videoResolution),
@@ -664,66 +663,6 @@ export function generateClipsVideo(clipIds: string[]): Job[] {
     }
   }
   return clipIds.map((id) => generateClipVideo(id))
-}
-
-/**
- * Animates a clip with its voice-over so mouths move with the speech. Uses the project's video model when it
- * accepts audio, otherwise Wan 2.7. A missing voice-over is made first, outside the Higgsfield queue slot.
- */
-export function generateClipLipSync(clipId: string): Job {
-  const existing = activeJobFor({ clipId }, 'video')
-  if (existing) return existing
-  const clip = getClip(clipId)
-  if (!clip.imageAssetId) throw new Error('Buat gambar klip ini dulu sebelum membuat video Lip Sync.')
-  if (!clip.audioAssetId && !clip.narration.trim()) throw new Error('Klip ini belum punya narasi atau suara untuk disinkronkan.')
-
-  const job = insertJob({ projectId: clip.projectId, clipId, kind: 'video', provider: 'higgsfield' })
-  const ensureVoice = async (ctx: TaskCtx): Promise<void> => {
-    if (getClip(clipId).audioAssetId) return
-    ctx.progress(0.02, 'Membuat suara narasi/dialog dulu')
-    generateClipTts(clipId)
-    const started = Date.now()
-    while (activeJobFor({ clipId }, 'tts') && Date.now() - started < 10 * 60 * 1000) await sleep(1500, ctx.signal)
-  }
-  return startHiggsfield(
-    job,
-    async (ctx) => {
-      const fresh = getClip(clipId)
-      const project = getProject(fresh.projectId)
-      const image = getAsset(fresh.imageAssetId)
-      if (!image) throw new Error('Gambar klip tidak ditemukan')
-      const audioAsset = fresh.audioAssetId ? getAsset(fresh.audioAssetId) : null
-      if (!audioAsset) throw new Error('Suara klip ini gagal dibuat. Buat suara narasinya dulu, lalu coba lagi.')
-
-      const projModel = getVideoModel(project.videoModel)
-      const model = projModel.props.audio_url || projModel.props.audio_urls ? projModel : getVideoModel(LIP_SYNC_FALLBACK_MODEL)
-
-      ctx.progress(0.08, 'Menyiapkan gambar dan suara untuk Lip Sync')
-      const imgUrl = await publicUrlFor(image, ctx.signal)
-      const audioUrl = await publicUrlFor(audioAsset, ctx.signal)
-
-      const basePrompt = fresh.videoPrompt.trim() || splitAvoid(fresh.visualPrompt).scene.replace(/\.$/, '')
-      const lipSyncPrompt = `Close-up or medium shot of the character speaking naturally with synchronized mouth and lip movements matching the speech audio. ${basePrompt}`
-
-      return {
-        endpoint: model.id,
-        body: videoBody(model, lipSyncPrompt, imgUrl, fresh.durationMs / 1000, project.aspectRatio, project.videoResolution, audioUrl),
-        payload: { target: 'clip-video', model: model.id, prompt: lipSyncPrompt }
-      }
-    },
-    ensureVoice
-  )
-}
-
-export function generateClipsLipSync(clipIds: string[]): Job[] {
-  if (!clipIds.length) return []
-  for (const id of clipIds) {
-    const clip = getClip(id)
-    if (!clip.imageAssetId) {
-      throw new Error(`Klip "${clip.title || id}" belum memiliki gambar. Buat gambarnya dulu sebelum dijadikan video lip sync.`)
-    }
-  }
-  return clipIds.map((id) => generateClipLipSync(id))
 }
 
 /** Turns every clip that has an image but no AI video yet into a video. */

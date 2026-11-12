@@ -26,8 +26,6 @@ import {
   generateThumbnail,
   generateClipVideo,
   generateClipsVideo,
-  generateClipLipSync,
-  generateClipsLipSync,
   generateMissingImages,
   generateMissingVideos,
   generateMissingTts,
@@ -140,8 +138,6 @@ export function registerIpc(): void {
   handle('generate:missingImages', (projectId: string) => generateMissingImages(projectId))
   handle('generate:missingVideos', (projectId: string) => generateMissingVideos(projectId))
   handle('generate:clipsVideo', (clipIds: string[]) => generateClipsVideo(clipIds))
-  handle('generate:clipLipSync', (clipId: string) => generateClipLipSync(clipId))
-  handle('generate:clipsLipSync', (clipIds: string[]) => generateClipsLipSync(clipIds))
   handle('generate:cancelProject', (projectId: string, kind?: string) => cancelProjectJobs(projectId, kind))
   handle('generate:missingTts', (projectId: string) => generateMissingTts(projectId))
   handle('generate:narration', (projectId: string, mode: 'missing' | 'all') => generateNarration(projectId, mode === 'all' ? 'all' : 'missing'))

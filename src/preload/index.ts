@@ -46,8 +46,6 @@ const api: StudioApi = {
     missingImages: call('generate:missingImages'),
     missingVideos: call('generate:missingVideos'),
     clipsVideo: call('generate:clipsVideo'),
-    clipLipSync: call('generate:clipLipSync'),
-    clipsLipSync: call('generate:clipsLipSync'),
     missingTts: call('generate:missingTts'),
     narration: call('generate:narration'),
     syncCaptions: call('generate:syncCaptions'),

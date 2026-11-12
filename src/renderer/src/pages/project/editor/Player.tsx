@@ -491,57 +491,69 @@ export function Player({
           </span>
         )}
       </div>
-      <div className="flex items-center gap-1.5" style={{ width: box.w }}>
-        <IconButton label="Klip sebelumnya" className="border-transparent bg-transparent" onClick={() => jump(-1)}>
-          <SkipBack className="size-5" />
-        </IconButton>
-        <IconButton label="Mundur 1 frame ([)" className="border-transparent bg-transparent" onClick={() => stepFrame(-1)}>
-          <ChevronLeft className="size-5" />
-        </IconButton>
-        <button
-          type="button"
-          aria-label={playing ? 'Jeda' : 'Putar'}
-          onClick={() => {
-            stopAudition()
-            if (!playing && t >= total - 0.05) seek(0)
-            toggle()
-          }}
-          className="flex size-11 items-center justify-center rounded-full border-[1.5px] border-ink bg-ink text-paper hover:bg-ink-2"
-        >
-          {playing ? <Pause className="size-5" fill="currentColor" /> : <Play className="ml-0.5 size-5" fill="currentColor" />}
-        </button>
-        <IconButton label="Maju 1 frame (])" className="border-transparent bg-transparent" onClick={() => stepFrame(1)}>
-          <ChevronRight className="size-5" />
-        </IconButton>
-        <IconButton label="Klip berikutnya" className="border-transparent bg-transparent" onClick={() => jump(1)}>
-          <SkipForward className="size-5" />
-        </IconButton>
-        <span className="ml-2 font-mono text-sm">
-          {timecode(t)} <span className="text-muted">/ {timecode(total)}</span>
-        </span>
-        <span className="flex-1" />
-        {aspect === '9:16' && (
+      <div
+        className="flex items-center gap-1.5 select-none"
+        style={{ width: Math.max(box.w, 480), maxWidth: '100%' }}
+      >
+        <div className="flex items-center gap-1 shrink-0">
+          <IconButton label="Klip sebelumnya" size={36} className="border-transparent bg-transparent hover:bg-sand" onClick={() => jump(-1)}>
+            <SkipBack className="size-4.5" />
+          </IconButton>
+          <IconButton label="Mundur 1 frame ([)" size={36} className="border-transparent bg-transparent hover:bg-sand" onClick={() => stepFrame(-1)}>
+            <ChevronLeft className="size-4.5" />
+          </IconButton>
           <button
             type="button"
-            onClick={() => setShowShortsGuide(!showShortsGuide)}
-            aria-pressed={showShortsGuide}
-            title="Tampilkan panduan area aman YouTube Shorts"
-            className={cx(
-              'inline-flex items-center gap-1 rounded-md px-2 py-1 text-xs font-medium transition-colors',
-              showShortsGuide ? 'border border-ink bg-sun-soft font-semibold text-ink' : 'text-ink-2 hover:bg-sand'
-            )}
+            aria-label={playing ? 'Jeda' : 'Putar'}
+            onClick={() => {
+              stopAudition()
+              if (!playing && t >= total - 0.05) seek(0)
+              toggle()
+            }}
+            className="flex size-10 shrink-0 items-center justify-center rounded-full border-[1.5px] border-ink bg-ink text-paper shadow-sm transition-transform hover:bg-ink-2 active:scale-95"
           >
-            <Smartphone className="size-3.5" />
-            Shorts Guide
+            {playing ? <Pause className="size-4.5" fill="currentColor" /> : <Play className="ml-0.5 size-4.5" fill="currentColor" />}
           </button>
-        )}
-        <IconButton
-          label={isFullscreen ? 'Keluar layar penuh (F)' : 'Layar penuh / Cinema mode (F)'}
-          className="border-transparent bg-transparent"
-          onClick={toggleFullscreen}
-        >
-          {isFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
-        </IconButton>
+          <IconButton label="Maju 1 frame (])" size={36} className="border-transparent bg-transparent hover:bg-sand" onClick={() => stepFrame(1)}>
+            <ChevronRight className="size-4.5" />
+          </IconButton>
+          <IconButton label="Klip berikutnya" size={36} className="border-transparent bg-transparent hover:bg-sand" onClick={() => jump(1)}>
+            <SkipForward className="size-4.5" />
+          </IconButton>
+        </div>
+        <div className="ml-2 shrink-0 font-mono text-xs tabular-nums text-ink whitespace-nowrap">
+          <span className="font-semibold">{timecode(t)}</span>
+          <span className="mx-1 text-muted">/</span>
+          <span className="text-muted">{timecode(total)}</span>
+        </div>
+        <div className="flex-1 min-w-2" />
+        <div className="flex items-center gap-1.5 shrink-0">
+          {aspect === '9:16' && (
+            <button
+              type="button"
+              onClick={() => setShowShortsGuide(!showShortsGuide)}
+              aria-pressed={showShortsGuide}
+              title="Tampilkan panduan area aman YouTube Shorts"
+              className={cx(
+                'inline-flex shrink-0 whitespace-nowrap items-center gap-1.5 rounded-lg border px-2.5 py-1 text-xs font-medium transition-colors',
+                showShortsGuide
+                  ? 'border-ink bg-sun-soft font-semibold text-ink shadow-xs'
+                  : 'border-line-2 bg-surface text-ink-2 hover:border-ink-2 hover:bg-paper hover:text-ink'
+              )}
+            >
+              <Smartphone className="size-3.5" />
+              <span>Shorts Guide</span>
+            </button>
+          )}
+          <IconButton
+            label={isFullscreen ? 'Keluar layar penuh (F)' : 'Layar penuh / Cinema mode (F)'}
+            size={36}
+            className="border-transparent bg-transparent hover:bg-sand"
+            onClick={toggleFullscreen}
+          >
+            {isFullscreen ? <Minimize2 className="size-4" /> : <Maximize2 className="size-4" />}
+          </IconButton>
+        </div>
       </div>
     </section>
   )

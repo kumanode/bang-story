@@ -15,7 +15,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   imageModel: DEFAULT_IMAGE_MODEL,
   videoModel: DEFAULT_VIDEO_MODEL,
   whisperAuto: true,
-  defaultVisualProvider: 'higgsfield',
+  defaultVisualProvider: 'flow2api',
   flow2apiBaseUrl: 'http://localhost:8000/v1',
   flow2apiImageModel: 'gemini-3.1-flash-image',
   flow2apiVideoModel: 'veo-3.1-fast-i2v',
@@ -46,7 +46,7 @@ export function getSettings(): AppSettings {
   out.flow2apiConcurrency = clampConcurrency(out.flow2apiConcurrency, 3, DEFAULT_SETTINGS.flow2apiConcurrency)
   if (out.imageGenerationMode !== 'draft' && out.imageGenerationMode !== 'final') out.imageGenerationMode = 'final'
   if (out.defaultVisualProvider !== 'higgsfield' && out.defaultVisualProvider !== 'flow2api') {
-    out.defaultVisualProvider = 'higgsfield'
+    out.defaultVisualProvider = 'flow2api'
   }
   if (out.theme !== 'light' && out.theme !== 'dark' && out.theme !== 'system') {
     out.theme = 'system'

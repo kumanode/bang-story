@@ -175,13 +175,29 @@ export function IdeaStep() {
     updateProject({ storyPlan: { ...current, ...patch } })
   }
 
-  const makeChapterPlan = async (): Promise<void> => {
+  const makeChapterPlan = async (isRedo = false): Promise<void> => {
+    if (isRedo) {
+      const ok = await confirmDialog({
+        title: 'Buat ulang kerangka?',
+        body: 'Semua editan pada judul bab, pertanyaan, detail kunci, dan penutup akan diganti hasil baru dari AI.',
+        confirm: 'Buat ulang'
+      })
+      if (!ok) return
+    }
+    // Preserve the custom opening the user typed before overwriting the plan.
+    const openingToKeep = customOpening
     setBusy(true)
     setPlanMessage('Menyusun kerangka bab…')
     try {
       await flush()
-      const plan = await window.api.story.chapterPlan(project.id, style as StoryStyleId, customOpening)
-      updateProject({ storyPlan: { ...plan, styleProfileId: style === 'custom-example' ? profileId : undefined } })
+      const plan = await window.api.story.chapterPlan(project.id, style as StoryStyleId, openingToKeep)
+      updateProject({
+        storyPlan: {
+          ...plan,
+          customOpening: openingToKeep,
+          styleProfileId: style === 'custom-example' ? profileId : undefined
+        }
+      })
       toast('success', 'Kerangka bab siap ditinjau. Rapikan isinya sebelum naskah ditulis.')
     } catch (e) {
       toast('error', errorText(e))
@@ -200,6 +216,7 @@ export function IdeaStep() {
       setSettings(nextSettings)
       updateStoryPlan({ style: 'custom-example', styleProfileId: profile.id })
       setProfileExamples('')
+      setProfileName('')
       toast('success', 'Profil gaya tersimpan. Contoh hanya dianalisis untuk membuat aturan gaya.')
     } catch (e) {
       toast('error', errorText(e))
@@ -290,6 +307,65 @@ export function IdeaStep() {
               </div>
             </div>
 
+            <div className="flex flex-col gap-2">
+              <span className="text-sm font-semibold">Durasi video</span>
+              <div className="flex flex-wrap gap-2">
+                {DURATIONS.map((d) => (
+                  <Chip key={d.sec} on={project.durationSec === d.sec} onClick={() => updateProject({ durationSec: d.sec, storyPlan: storyPlan ? { ...storyPlan, acts: [] } : null })} className="h-10 px-4">
+                    {d.label}
+                  </Chip>
+                ))}
+              </div>
+              <span className="text-[13px] text-muted">
+                Sekitar {clipCount} klip, masing-masing kurang lebih {perClip} detik. Durasi akhir mengikuti panjang suara narasi.
+              </span>
+            </div>
+
+            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-5">
+              <Field label="Bahasa naskah dan suara">
+                <Select
+                  label="Bahasa naskah dan suara"
+                  size="lg"
+                  value={project.language}
+                  onChange={(v) => updateProject({ language: v, storyPlan: null })}
+                  options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
+                />
+              </Field>
+              <div className="flex flex-col gap-1.5">
+                <span className="text-sm font-semibold">Format</span>
+                <div className="grid grid-cols-2 gap-2">
+                  {(
+                    [
+                      { id: '16:9', label: '16:9', sub: 'YouTube', w: 26, h: 15 },
+                      { id: '9:16', label: '9:16', sub: 'Shorts, Reels, TikTok', w: 13, h: 22 }
+                    ] as const
+                  ).map((f) => {
+                    const on = project.aspectRatio === f.id
+                    return (
+                      <button
+                        key={f.id}
+                        type="button"
+                        aria-pressed={on}
+                        onClick={() => updateProject({ aspectRatio: f.id })}
+                        className={cx(
+                          'flex h-12 items-center gap-2.5 rounded-xl px-3 text-left',
+                          on ? 'border-2 border-accent bg-accent-soft' : 'border border-line-2 bg-surface hover:border-ink-2'
+                        )}
+                      >
+                        <span className="flex w-[26px] justify-center">
+                          <span className="rounded-[3px] border-[1.8px] border-ink" style={{ width: f.w, height: f.h }} />
+                        </span>
+                        <span className="flex flex-col leading-tight">
+                          <span className="text-sm font-semibold">{f.label}</span>
+                          <span className="text-xs text-ink-2">{f.sub}</span>
+                        </span>
+                      </button>
+                    )
+                  })}
+                </div>
+              </div>
+            </div>
+
             <section className="flex flex-col gap-4 rounded-2xl border border-line bg-surface p-5">
               <div>
                 <h2 className="font-display text-xl font-bold">Gaya narasi</h2>
@@ -367,7 +443,7 @@ export function IdeaStep() {
                     <h2 className="font-display text-xl font-bold">Kerangka bab</h2>
                     <p className="mt-1 text-[13px] text-ink-2">Tinjau pertanyaan, pembuka, detail kunci, dan penutup. Judul bab menjadi struktur narasi, tidak dibacakan.</p>
                   </div>
-                  <button type="button" onClick={() => void makeChapterPlan()} disabled={busy} className="shrink-0 text-[13px] font-semibold text-accent-dark hover:underline disabled:opacity-50">
+                  <button type="button" onClick={() => void makeChapterPlan(true)} disabled={busy} className="shrink-0 text-[13px] font-semibold text-accent-dark hover:underline disabled:opacity-50">
                     Buat ulang kerangka
                   </button>
                 </div>
@@ -418,64 +494,6 @@ export function IdeaStep() {
                 </div>
               </section>
             )}
-            <div className="flex flex-col gap-2">
-              <span className="text-sm font-semibold">Durasi video</span>
-              <div className="flex flex-wrap gap-2">
-                {DURATIONS.map((d) => (
-                  <Chip key={d.sec} on={project.durationSec === d.sec} onClick={() => updateProject({ durationSec: d.sec, storyPlan: storyPlan ? { ...storyPlan, acts: [] } : null })} className="h-10 px-4">
-                    {d.label}
-                  </Chip>
-                ))}
-              </div>
-              <span className="text-[13px] text-muted">
-                Sekitar {clipCount} klip, masing-masing kurang lebih {perClip} detik. Durasi akhir mengikuti panjang suara narasi.
-              </span>
-            </div>
-
-            <div className="grid grid-cols-[minmax(0,1fr)_minmax(0,1.4fr)] gap-5">
-              <Field label="Bahasa naskah dan suara">
-                <Select
-                  label="Bahasa naskah dan suara"
-                  size="lg"
-                  value={project.language}
-                  onChange={(v) => updateProject({ language: v, storyPlan: null })}
-                  options={LANGUAGES.map((l) => ({ value: l.code, label: l.label }))}
-                />
-              </Field>
-              <div className="flex flex-col gap-1.5">
-                <span className="text-sm font-semibold">Format</span>
-                <div className="grid grid-cols-2 gap-2">
-                  {(
-                    [
-                      { id: '16:9', label: '16:9', sub: 'YouTube', w: 26, h: 15 },
-                      { id: '9:16', label: '9:16', sub: 'Shorts, Reels, TikTok', w: 13, h: 22 }
-                    ] as const
-                  ).map((f) => {
-                    const on = project.aspectRatio === f.id
-                    return (
-                      <button
-                        key={f.id}
-                        type="button"
-                        aria-pressed={on}
-                        onClick={() => updateProject({ aspectRatio: f.id })}
-                        className={cx(
-                          'flex h-12 items-center gap-2.5 rounded-xl px-3 text-left',
-                          on ? 'border-2 border-accent bg-accent-soft' : 'border border-line-2 bg-surface hover:border-ink-2'
-                        )}
-                      >
-                        <span className="flex w-[26px] justify-center">
-                          <span className="rounded-[3px] border-[1.8px] border-ink" style={{ width: f.w, height: f.h }} />
-                        </span>
-                        <span className="flex flex-col leading-tight">
-                          <span className="text-sm font-semibold">{f.label}</span>
-                          <span className="text-xs text-ink-2">{f.sub}</span>
-                        </span>
-                      </button>
-                    )
-                  })}
-                </div>
-              </div>
-            </div>
 
             <div className="flex flex-col gap-2">
               <span className="text-sm font-semibold">Suara narator</span>

@@ -19,6 +19,7 @@ Pengguna memasukkan kuncinya sendiri di **Pengaturan › Layanan AI dan kunci**.
 | Penyedia (`ApiProvider`) | Dipakai untuk |
 |---|---|
 | `higgsfield` | gambar, lembar karakter, video |
+| `flow2api` | gambar, lembar karakter, video melalui server Flow2API |
 | `gemini` | LLM (naskah/visual) dan Gemini TTS |
 | `elevenlabs` | TTS |
 | `openrouter`, `groq`, `custom` | LLM lewat API kompatibel OpenAI |

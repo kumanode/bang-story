@@ -156,7 +156,7 @@ function ClipTab({ clip, index }: { clip: Clip; index: number }) {
       {clip.motionType === 'video' ? (
         <Section title="Video AI">
           {video ? (
-            <p className="text-[13px] text-ink-2">Klip ini memakai video dari Higgsfield.</p>
+            <p className="text-[13px] text-ink-2">Klip ini memakai video dari {video.provider === 'flow2api' ? 'Flow2API' : 'Higgsfield'}.</p>
           ) : (
             <p className="text-[13px] text-ink-2">Video belum dibuat. Sampai video siap, pratinjau memakai gambar diam.</p>
           )}
@@ -170,17 +170,6 @@ function ClipTab({ clip, index }: { clip: Clip; index: number }) {
               onClick={() => void run(() => window.api.generate.clipVideo(clip.id))}
             >
               {video ? 'Buat ulang video' : 'Buat video'}
-            </Button>
-            <Button
-              size="sm"
-              variant="secondary"
-              icon={<Mic className="size-4" />}
-              loading={isRunning(videoJob)}
-              disabled={!image}
-              title="Buat video AI dengan gerakan bibir sinkron suara dialog"
-              onClick={() => void run(() => window.api.generate.clipLipSync(clip.id))}
-            >
-              Video Lip Sync AI
             </Button>
             {isRunning(videoJob) && (
               <Button
