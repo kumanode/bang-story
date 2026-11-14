@@ -22,6 +22,7 @@ import type {
   ProjectSnapshot,
   ProjectSummary,
   SceneRevision,
+  SmartSfxCue,
   StoryBrief,
   StoryPlan,
   StoryStyleId,
@@ -63,6 +64,10 @@ export interface StudioApi {
     visuals(projectId: string, mode: 'missing' | 'all'): Promise<ProjectBundle>
     /** A background-music prompt that fits the finished script, for use in Suno or another music AI. */
     musicPrompt(projectId: string): Promise<MusicPrompt>
+    /** Plans 3–6 cinematic sound cues based on the story script and scenes. */
+    planSmartSfx(projectId: string): Promise<SmartSfxCue[]>
+    /** Generates background instrumental music via ElevenLabs and sets it on the project. */
+    generateMusic(projectId: string, req: { prompt: string; durationMs: number }): Promise<Asset>
     /** AI titles, description, and timestamps for YouTube. */
     youtubeMetadata(projectId: string): Promise<YoutubeMetadata>
     /** A thumbnail idea written for the title the user picked. */
@@ -103,6 +108,8 @@ export interface StudioApi {
     pickImage(projectId: string): Promise<Asset | null>
     listBuiltinSfx(): Promise<BuiltinSfx[]>
     addBuiltinSfx(projectId: string, sfxId: string): Promise<Asset>
+    /** Generates a custom sound effect using ElevenLabs. */
+    generateSfx(projectId: string, req: { prompt: string; durationSec: number; name: string }): Promise<Asset>
     pickSfx(projectId: string): Promise<Asset | null>
     importSfx(projectId: string, path: string): Promise<Asset>
     getPathForFile(file: File): string

@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto'
-import { copyFileSync, existsSync, mkdirSync, rmSync, statSync } from 'node:fs'
+import { copyFileSync, existsSync, mkdirSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { basename, dirname, extname, join } from 'node:path'
 import { app, BrowserWindow, clipboard, dialog, ipcMain, shell } from 'electron'
 import type {
@@ -62,7 +62,7 @@ import * as gemini from './services/gemini'
 import * as f2a from './services/flow2api'
 import * as hf from './services/higgsfield'
 import * as llm from './services/llm'
-import { createStyleProfile, generateBrief, generateChapterPlan, generateHooks, generateOutline, generateScript, generateVisuals, generateMusicPrompt, generateThumbnailConcept, generateYoutubeMetadata, reviseScene } from './story'
+import { createStyleProfile, generateBrief, generateChapterPlan, generateHooks, generateOutline, generateScript, generateVisuals, generateMusicPrompt, generateThumbnailConcept, generateYoutubeMetadata, planSmartSfx, reviseScene } from './story'
 
 
 type Handler = (...args: any[]) => unknown
@@ -115,6 +115,29 @@ export function registerIpc(): void {
   handle('story:script', (projectId: string) => generateScript(projectId))
   handle('story:reviseScene', (projectId: string, clipId: string, instruction: string) => reviseScene(projectId, clipId, String(instruction ?? '')))
   handle('story:musicPrompt', (projectId: string) => generateMusicPrompt(projectId))
+  handle('story:planSmartSfx', (projectId: string) => planSmartSfx(projectId))
+  handle('story:generateMusic', async (projectId: string, req: { prompt: string; durationMs: number }) => {
+    getProject(projectId)
+    const prompt = String(req?.prompt ?? '').trim()
+    if (!prompt) throw new Error('Prompt musik tidak boleh kosong.')
+    const durationMs = Math.max(5000, Math.min(Number(req?.durationMs) || 60000, 300000))
+    const buf = await eleven.generateMusic(prompt, { durationMs })
+    const rel = `music/${randomUUID()}.mp3`
+    const abs = assetAbsPath(projectId, rel)
+    mkdirSync(dirname(abs), { recursive: true })
+    writeFileSync(abs, buf)
+    const actualDurationMs = await probeDurationMs(abs).catch(() => durationMs)
+    const asset = insertAsset({
+      projectId,
+      kind: 'music',
+      provider: 'elevenlabs',
+      prompt,
+      localPath: rel,
+      durationMs: actualDurationMs
+    })
+    emit.asset(asset)
+    return asset
+  })
   handle('story:youtubeMetadata', (projectId: string) => generateYoutubeMetadata(projectId))
   handle('story:visuals', (projectId: string, mode: 'missing' | 'all') => generateVisuals(projectId, mode === 'all' ? 'all' : 'missing'))
 
@@ -240,6 +263,29 @@ export function registerIpc(): void {
       kind: 'sfx',
       provider: 'builtin',
       prompt: item.name,
+      localPath: rel,
+      durationMs
+    })
+    emit.asset(asset)
+    return asset
+  })
+
+  handle('assets:generateSfx', async (projectId: string, req: { prompt: string; durationSec: number; name: string }) => {
+    getProject(projectId)
+    const prompt = String(req?.prompt ?? '').trim()
+    if (!prompt) throw new Error('Prompt efek suara tidak boleh kosong.')
+    const durationSeconds = Math.max(0.5, Math.min(Number(req?.durationSec) || 2.5, 22))
+    const buf = await eleven.generateSoundEffect(prompt, { durationSeconds })
+    const rel = `sfx/${randomUUID()}.mp3`
+    const abs = assetAbsPath(projectId, rel)
+    mkdirSync(dirname(abs), { recursive: true })
+    writeFileSync(abs, buf)
+    const durationMs = await probeDurationMs(abs).catch(() => Math.round(durationSeconds * 1000))
+    const asset = insertAsset({
+      projectId,
+      kind: 'sfx',
+      provider: 'elevenlabs',
+      prompt: String(req?.name || prompt),
       localPath: rel,
       durationMs
     })

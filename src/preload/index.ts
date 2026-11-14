@@ -34,6 +34,8 @@ const api: StudioApi = {
     reviseScene: call('story:reviseScene'),
     visuals: call('story:visuals'),
     musicPrompt: call('story:musicPrompt'),
+    planSmartSfx: call('story:planSmartSfx'),
+    generateMusic: call('story:generateMusic'),
     youtubeMetadata: call('story:youtubeMetadata'),
     thumbnailConcept: call('story:thumbnailConcept')
   },
@@ -64,6 +66,7 @@ const api: StudioApi = {
     pickImage: call('assets:pickImage'),
     listBuiltinSfx: call('assets:listBuiltinSfx'),
     addBuiltinSfx: call('assets:addBuiltinSfx'),
+    generateSfx: call('assets:generateSfx'),
     pickSfx: call('assets:pickSfx'),
     importSfx: call('assets:importSfx'),
     getPathForFile: (file: File) => webUtils.getPathForFile(file),
