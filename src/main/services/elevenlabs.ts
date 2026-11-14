@@ -26,6 +26,32 @@ async function el<T>(path: string, init: RequestInit & { key?: string } = {}): P
   return (await res.json()) as T
 }
 
+async function elAudio(path: string, init: RequestInit & { key?: string } = {}): Promise<Buffer> {
+  const res = await fetch(`${BASE}${path}`, {
+    ...init,
+    headers: {
+      'xi-api-key': init.key ?? requireSecret('elevenlabs'),
+      'Content-Type': 'application/json',
+      ...(init.headers ?? {})
+    }
+  })
+  if (!res.ok) {
+    const detail = await readError(res)
+    if (res.status === 401) throw new Error('Kunci ElevenLabs tidak valid atau tidak punya izin ini.')
+    if (res.status === 402 || /quota|credits/i.test(detail)) throw new Error('Kuota ElevenLabs habis.')
+    if (res.status === 403 || res.status === 404) {
+      if (/music/i.test(path)) {
+        throw new Error('Fitur ElevenLabs Music membutuhkan akses model musik pada akun kamu. Kamu tetap bisa memakai prompt ini di Suno/Udio atau membuat SFX.')
+      }
+      throw new Error(`ElevenLabs audio tidak ditemukan: ${detail}`)
+    }
+    if (res.status === 429) throw new Error('ElevenLabs sedang sibuk. Coba lagi sebentar.')
+    throw new Error(`ElevenLabs gagal: ${detail}`)
+  }
+  const ab = await res.arrayBuffer()
+  return Buffer.from(ab)
+}
+
 export async function testKey(key?: string): Promise<KeyTestResult> {
   const k = key ?? getSecret('elevenlabs')
   if (!k) return { ok: false, message: 'Kunci belum diatur' }
@@ -142,3 +168,41 @@ export async function speak(
   )
   return { audio: Buffer.from(r.audio_base64, 'base64'), words: r.alignment ? toWords(r.alignment) : [] }
 }
+
+/** Generates a custom sound effect (MP3) from a text description. */
+export async function generateSoundEffect(
+  text: string,
+  options?: { durationSeconds?: number; promptInfluence?: number },
+  signal?: AbortSignal
+): Promise<Buffer> {
+  const body: Record<string, unknown> = {
+    text: text.trim()
+  }
+  if (options?.durationSeconds) body.duration_seconds = options.durationSeconds
+  if (typeof options?.promptInfluence === 'number') body.prompt_influence = options.promptInfluence
+  return elAudio('/v1/sound-generation', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    signal
+  })
+}
+
+/** Generates background instrumental music (MP3) from a text prompt. */
+export async function generateMusic(
+  prompt: string,
+  options?: { durationMs?: number; modelId?: string; forceInstrumental?: boolean },
+  signal?: AbortSignal
+): Promise<Buffer> {
+  const body: Record<string, unknown> = {
+    prompt: prompt.trim(),
+    music_length_ms: options?.durationMs ?? 60000,
+    model_id: options?.modelId ?? 'music_v1',
+    force_instrumental: options?.forceInstrumental ?? true
+  }
+  return elAudio('/v1/music', {
+    method: 'POST',
+    body: JSON.stringify(body),
+    signal
+  })
+}
+
