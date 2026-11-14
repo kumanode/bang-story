@@ -1125,7 +1125,7 @@ const SMART_SFX_SCHEMA = {
         additionalProperties: false,
         properties: {
           clipIndex: {
-            type: 'number',
+            type: 'integer',
             description: '1-based index of the scene where this sound effect occurs.'
           },
           timeOffsetSec: {
@@ -1201,7 +1201,7 @@ export async function planSmartSfx(projectId: string): Promise<SmartSfxCue[]> {
   const out: SmartSfxCue[] = []
 
   for (const c of rawCues) {
-    const idx = typeof c.clipIndex === 'number' ? c.clipIndex - 1 : -1
+    const idx = typeof c.clipIndex === 'number' ? Math.round(c.clipIndex) - 1 : -1
     const clip = clips[idx]
     if (!clip) continue
     const clipDurSec = Math.max(1, clip.durationMs / 1000)

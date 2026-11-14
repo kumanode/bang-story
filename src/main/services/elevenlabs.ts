@@ -43,6 +43,7 @@ async function elAudio(path: string, init: RequestInit & { key?: string } = {}):
       if (/music/i.test(path)) {
         throw new Error('Fitur ElevenLabs Music membutuhkan akses model musik pada akun kamu. Kamu tetap bisa memakai prompt ini di Suno/Udio atau membuat SFX.')
       }
+      if (res.status === 403) throw new Error(`Izin ElevenLabs tidak mencukupi untuk membuat audio ini: ${detail}`)
       throw new Error(`ElevenLabs audio tidak ditemukan: ${detail}`)
     }
     if (res.status === 429) throw new Error('ElevenLabs sedang sibuk. Coba lagi sebentar.')

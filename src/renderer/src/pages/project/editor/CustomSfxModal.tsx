@@ -38,16 +38,22 @@ export function CustomSfxModal({ open, onClose, projectId, onAdd }: CustomSfxMod
   const togglePlay = () => {
     if (!asset) return
     if (!audioRef.current) {
-      audioRef.current = new Audio(asset.url)
-      audioRef.current.onended = () => setPlaying(false)
+      const a = new Audio(asset.url)
+      a.onended = () => {
+        setPlaying(false)
+        a.currentTime = 0
+      }
+      audioRef.current = a
     }
     if (playing) {
       audioRef.current.pause()
       audioRef.current.currentTime = 0
       setPlaying(false)
     } else {
-      audioRef.current.play().catch(() => setPlaying(false))
-      setPlaying(true)
+      audioRef.current
+        .play()
+        .then(() => setPlaying(true))
+        .catch(() => setPlaying(false))
     }
   }
 
@@ -59,6 +65,7 @@ export function CustomSfxModal({ open, onClose, projectId, onAdd }: CustomSfxMod
     setGenerating(true)
     if (audioRef.current) {
       audioRef.current.pause()
+      audioRef.current = null
       setPlaying(false)
     }
     try {
@@ -69,12 +76,16 @@ export function CustomSfxModal({ open, onClose, projectId, onAdd }: CustomSfxMod
       })
       setAsset(res)
       toast('info', 'Efek suara berhasil dibuat!')
-      // Langsung preview otomatis
+      // Langsung preview otomatis jika modal masih terbuka
       const a = new Audio(res.url)
       audioRef.current = a
-      a.onended = () => setPlaying(false)
-      a.play().catch(() => {})
-      setPlaying(true)
+      a.onended = () => {
+        setPlaying(false)
+        a.currentTime = 0
+      }
+      a.play()
+        .then(() => setPlaying(true))
+        .catch(() => setPlaying(false))
     } catch (e) {
       toast('error', errorText(e))
     } finally {
@@ -84,6 +95,10 @@ export function CustomSfxModal({ open, onClose, projectId, onAdd }: CustomSfxMod
 
   const handleCommit = () => {
     if (!asset) return
+    if (audioRef.current) {
+      audioRef.current.pause()
+      setPlaying(false)
+    }
     onAdd(asset)
     onClose()
   }
@@ -91,7 +106,7 @@ export function CustomSfxModal({ open, onClose, projectId, onAdd }: CustomSfxMod
   return (
     <Modal
       open={open}
-      onClose={onClose}
+      onClose={generating ? () => {} : onClose}
       title="Buat SFX Kustom (ElevenLabs)"
       subtitle="Ketik deskripsi efek suara apa pun dalam bahasa Inggris untuk di-generate secara orisinal oleh AI."
       width={560}
@@ -167,7 +182,7 @@ export function CustomSfxModal({ open, onClose, projectId, onAdd }: CustomSfxMod
           </Button>
 
           <div className="flex items-center gap-2">
-            <Button type="button" variant="ghost" onClick={onClose}>
+            <Button type="button" variant="ghost" disabled={generating} onClick={onClose}>
               Batal
             </Button>
             <Button

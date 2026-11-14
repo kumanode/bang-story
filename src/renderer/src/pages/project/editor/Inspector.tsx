@@ -1035,15 +1035,19 @@ function MusicPromptSection() {
 
   const generateMusicWithElevenLabs = async (): Promise<void> => {
     if (!mp) return
+    const promptText = (mp.description || mp.style || mp.title || '').trim()
+    if (!promptText) {
+      toast('info', 'Isi deskripsi atau gaya musik terlebih dahulu.')
+      return
+    }
     setGeneratingMusic(true)
     try {
-      const promptText = mp.description || mp.style || mp.title
       const asset = await window.api.story.generateMusic(project.id, {
         prompt: promptText,
         durationMs: durationSec * 1000
       })
       useProject.getState().addAsset(asset)
-      updateEditor({ musicAssetId: asset.id, musicStartMs: 0 })
+      updateEditor({ musicAssetId: asset.id, musicStartMs: 0, musicInMs: 0, musicEndMs: null })
       toast('info', `Musik latar (${durationSec}s) berhasil dibuat dan dipasang di timeline.`)
     } catch (e) {
       toast('error', errorText(e))

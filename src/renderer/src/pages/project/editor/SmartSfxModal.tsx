@@ -79,6 +79,7 @@ export function SmartSfxModal({ open, onClose, projectId, items, onBatchAdd }: S
     setGenerating(true)
     const results: { asset: Asset; startMs: number; volumeDb: number }[] = []
     let failedCount = 0
+    let lastErrorMsg = ''
 
     for (let i = 0; i < indicesToRun.length; i++) {
       const cueIndex = indicesToRun[i]
@@ -103,6 +104,7 @@ export function SmartSfxModal({ open, onClose, projectId, items, onBatchAdd }: S
         })
       } catch (err) {
         failedCount++
+        lastErrorMsg = errorText(err)
         console.error(`Gagal membuat SFX "${cue.name}":`, err)
       }
     }
@@ -113,13 +115,13 @@ export function SmartSfxModal({ open, onClose, projectId, items, onBatchAdd }: S
     if (results.length > 0) {
       onBatchAdd(results)
       if (failedCount > 0) {
-        toast('info', `${results.length} efek suara terpasang, ${failedCount} efek suara gagal (kuota/koneksi).`)
+        toast('info', `${results.length} efek suara terpasang, ${failedCount} efek suara gagal (${lastErrorMsg || 'kuota/koneksi'}).`)
       } else {
         toast('info', `${results.length} efek suara berhasil dibuat dan dipasang ke timeline.`)
       }
       onClose()
     } else {
-      toast('error', 'Semua efek suara gagal di-generate. Periksa kuota atau koneksi ElevenLabs kamu.')
+      toast('error', lastErrorMsg ? `Gagal men-generate SFX: ${lastErrorMsg}` : 'Semua efek suara gagal di-generate. Periksa kuota atau koneksi ElevenLabs kamu.')
     }
   }
 
