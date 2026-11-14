@@ -1012,6 +1012,9 @@ function MusicPromptSection() {
   const { project, updateEditor, flush } = useProject()
   const { toast } = useApp()
   const [busy, setBusy] = useState(false)
+  const [generatingMusic, setGeneratingMusic] = useState(false)
+  const [durationSec, setDurationSec] = useState<30 | 60 | 120>(60)
+
   if (!project) return null
   const mp = project.editor.musicPrompt ?? null
   const set = (patch: Partial<NonNullable<typeof mp>>): void => {
@@ -1029,6 +1032,26 @@ function MusicPromptSection() {
       setBusy(false)
     }
   }
+
+  const generateMusicWithElevenLabs = async (): Promise<void> => {
+    if (!mp) return
+    setGeneratingMusic(true)
+    try {
+      const promptText = mp.description || mp.style || mp.title
+      const asset = await window.api.story.generateMusic(project.id, {
+        prompt: promptText,
+        durationMs: durationSec * 1000
+      })
+      useProject.getState().addAsset(asset)
+      updateEditor({ musicAssetId: asset.id, musicStartMs: 0 })
+      toast('info', `Musik latar (${durationSec}s) berhasil dibuat dan dipasang di timeline.`)
+    } catch (e) {
+      toast('error', errorText(e))
+    } finally {
+      setGeneratingMusic(false)
+    }
+  }
+
   return (
     <Section title="Prompt musik AI">
       <p className="text-[13px] leading-relaxed text-ink-2">
@@ -1036,6 +1059,43 @@ function MusicPromptSection() {
       </p>
       {mp && (
         <>
+          <div className="space-y-2.5 rounded-xl border border-line-2 bg-paper p-3">
+            <div className="flex items-center justify-between">
+              <span className="flex items-center gap-1.5 text-xs font-semibold text-ink">
+                <Music className="size-3.5 text-accent" />
+                Generate dengan ElevenLabs
+              </span>
+              <div className="flex items-center gap-1 rounded-lg border border-line bg-surface p-0.5">
+                {([30, 60, 120] as const).map((sec) => (
+                  <button
+                    key={sec}
+                    type="button"
+                    onClick={() => setDurationSec(sec)}
+                    className={cx(
+                      'rounded px-2 py-0.5 text-[11px] font-medium transition-colors',
+                      durationSec === sec ? 'bg-paper font-semibold text-ink shadow-xs' : 'text-muted hover:text-ink'
+                    )}
+                  >
+                    {sec}s
+                  </button>
+                ))}
+              </div>
+            </div>
+            <p className="text-[11px] leading-tight text-muted">
+              Musik orisinal {durationSec} detik akan di-loop halus sepanjang video.
+            </p>
+            <Button
+              size="sm"
+              variant="accent"
+              className="w-full justify-center"
+              icon={<Sparkles className="size-4" />}
+              loading={generatingMusic}
+              onClick={() => void generateMusicWithElevenLabs()}
+            >
+              Generate Musik Latar ({durationSec}s)
+            </Button>
+          </div>
+
           <PromptField label="Style of Music" hint="kolom gaya di Suno" value={mp.style} rows={3} onChange={(v) => set({ style: v })} />
           <PromptField label="Exclude styles" hint="yang dihindari" value={mp.exclude} rows={1} onChange={(v) => set({ exclude: v })} />
           <PromptField label="Judul lagu" value={mp.title} rows={1} onChange={(v) => set({ title: v })} />
