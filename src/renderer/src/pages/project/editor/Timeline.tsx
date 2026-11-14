@@ -277,7 +277,13 @@ export function Timeline({
           auto: true
         }
       })
-      const manual = (useProject.getState().project?.editor.sfx ?? []).filter((s) => !s.auto)
+      const assetsState = useProject.getState().assets
+      const manual = (useProject.getState().project?.editor.sfx ?? []).filter((s) => {
+        if (!s.auto) return true
+        const asset = assetsState[s.assetId]
+        // SFX berbayar ElevenLabs dan file lokal jangan pernah terhapus oleh SFX otomatis bawaan
+        return asset && asset.provider !== 'builtin'
+      })
       updateEditor({ sfx: [...manual, ...placed] })
       toast('info', `${placed.length} efek suara otomatis dipasang. Jalankan lagi untuk menyusun ulang; SFX manual tidak diubah.`)
     } catch (e) {
