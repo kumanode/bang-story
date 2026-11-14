@@ -12,6 +12,7 @@ import type {
   Project,
   ProjectBundle,
   SceneRevision,
+  SmartSfxCue,
   StoryAct,
   StoryBrief,
   StoryFactMode,
@@ -1110,6 +1111,117 @@ export async function generateMusicPrompt(projectId: string): Promise<MusicPromp
     durationSec
   }
   if (!out.style && !out.description) throw new Error('Model tidak menghasilkan prompt musik. Coba lagi.')
+  return out
+}
+
+const SMART_SFX_SCHEMA = {
+  type: 'object',
+  additionalProperties: false,
+  properties: {
+    cues: {
+      type: 'array',
+      items: {
+        type: 'object',
+        additionalProperties: false,
+        properties: {
+          clipIndex: {
+            type: 'number',
+            description: '1-based index of the scene where this sound effect occurs.'
+          },
+          timeOffsetSec: {
+            type: 'number',
+            description: 'Seconds from the start of the scene (e.g. 0.5).'
+          },
+          name: {
+            type: 'string',
+            description: 'Short Indonesian name for the sound effect (e.g. Pintu Berderit, Kilat Petir, Langkah Kaki).'
+          },
+          prompt: {
+            type: 'string',
+            description: 'Descriptive, cinematic English sound effect prompt for ElevenLabs text-to-sound (e.g. Old heavy wooden door creaking open slowly in an abandoned mansion, reverb).'
+          },
+          durationSec: {
+            type: 'number',
+            description: 'Duration of the sound in seconds, between 1.0 and 5.0.'
+          },
+          volumeDb: {
+            type: 'number',
+            description: 'Target volume in dB, usually between -12 and -6 so it sits nicely under narration.'
+          }
+        },
+        required: ['clipIndex', 'timeOffsetSec', 'name', 'prompt', 'durationSec', 'volumeDb']
+      }
+    }
+  },
+  required: ['cues']
+}
+
+/** Plans 3–6 contextual sound effects based on the story script and visual descriptions. */
+export async function planSmartSfx(projectId: string): Promise<SmartSfxCue[]> {
+  const b = getBundle(projectId)
+  const clips = b.clips
+  if (!clips.length) throw new Error('Belum ada adegan dalam proyek.')
+
+  const scenes = clips
+    .map((c, i) => {
+      const dur = Math.max(1, Math.round(c.durationMs / 1000))
+      return `Scene ${i + 1} (id: ${c.id}, duration: ${dur}s, title: ${c.title}):\n- Story: ${c.story || c.narration}\n- Visual: ${c.visualPrompt || ''}`
+    })
+    .join('\n\n')
+
+  const system = [
+    'You are a professional cinematic sound designer and Foley supervisor for YouTube storytelling videos.',
+    'Carefully review the story scenes and choose 3 to 6 key moments across the video that benefit most from impactful sound effects (SFX).',
+    'Do not oversaturate; select meaningful moments: door knocks, thunderclaps, gunshots, footsteps, eerie wind, sword clash, glass break, heartbeat, explosions, etc.',
+    'For each sound effect, write a rich cinematic English description for ElevenLabs Text-to-Sound-Effects API.',
+    'Never include speech, dialogue, or music in the sound effect prompts.'
+  ].join(' ')
+
+  const prompt = `Review these scenes and produce 3-6 cinematic sound cues:\n\n${scenes}`
+
+  interface SmartSfxRaw {
+    cues?: {
+      clipIndex?: number
+      timeOffsetSec?: number
+      name?: string
+      prompt?: string
+      durationSec?: number
+      volumeDb?: number
+    }[]
+  }
+
+  const r = await generateJson<SmartSfxRaw>({
+    system,
+    prompt,
+    schema: SMART_SFX_SCHEMA,
+    name: 'smart_sfx'
+  })
+
+  const rawCues = r.cues ?? []
+  const out: SmartSfxCue[] = []
+
+  for (const c of rawCues) {
+    const idx = typeof c.clipIndex === 'number' ? c.clipIndex - 1 : -1
+    const clip = clips[idx]
+    if (!clip) continue
+    const clipDurSec = Math.max(1, clip.durationMs / 1000)
+    const timeOffsetSec = Math.max(0, Math.min(typeof c.timeOffsetSec === 'number' ? c.timeOffsetSec : 0.5, clipDurSec - 0.5))
+    const durationSec = Math.max(0.5, Math.min(typeof c.durationSec === 'number' ? c.durationSec : 2.5, 10))
+    const volumeDb = Math.max(-24, Math.min(typeof c.volumeDb === 'number' ? c.volumeDb : -8, 0))
+    const name = str(c.name) || 'Efek Suara'
+    const promptText = str(c.prompt)
+    if (!promptText) continue
+
+    out.push({
+      clipId: clip.id,
+      timeOffsetSec,
+      name,
+      prompt: promptText,
+      durationSec,
+      volumeDb
+    })
+  }
+
   return out
 }
 

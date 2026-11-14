@@ -52,6 +52,15 @@ export interface BuiltinSfx {
   description: string
 }
 
+export interface SmartSfxCue {
+  clipId: string
+  timeOffsetSec: number
+  name: string
+  prompt: string
+  durationSec: number
+  volumeDb: number
+}
+
 export interface EditorSettings {
   captionStyle: CaptionStyleId
   captionPosition: CaptionPosition
