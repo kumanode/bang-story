@@ -2,169 +2,130 @@
 
 **Tanggal:** 2026-11-14  
 **Topik:** Peningkatan Backsound (Musik Latar) dan Sound Effects (SFX) menggunakan API ElevenLabs di Bang Story.  
-**Pendekatan Terpilih:** Opsi 2 — *Hybrid Smart-Automation* (Otomatisasi Cerdas Berbasis Cerita + Generator Manual di Timeline).
+**Pendekatan Terpilih:** Opsi 2 — *Hybrid Smart-Automation* (Otomatisasi Cerdas Berbasis Cerita + Generator Manual di Timeline).  
+**Status:** Menunggu Persetujuan Pengguna
 
 ---
 
 ## 1. Latar Belakang & Tujuan (Intent & The Why)
 
-Saat ini, Bang Story sudah memiliki alur produksi video YouTube yang terotomatisasi (ide → naskah → visual storyboard → narasi suara → timeline editor → ekspor video). Namun di aspek audio sekunder:
-1. **SFX (Sound Effects):** Hanya menyediakan 7 file audio lokal bawaan (`whoosh`, `boom`, `riser`, `knock`, `thunder`, `bell`, `glitch`) yang dicocokkan dengan beberapa kata kunci naskah sederhana (`planAutoSfx`). Efek suara adegan spesifik (misal suara tapak kaki di salju, desau angin badai, gemerincing kunci, suara tembakan laser) tidak bisa dibuat.
-2. **Backsound (Musik Latar):** Hanya membuatkan teks prompt (`MusicPrompt`) lalu mengarahkan pengguna membuka tab browser ke Suno, Udio, atau ElevenLabs Music untuk mengunduh audio manual secara eksternal.
+Saat ini di Bang Story:
+1. **SFX (Sound Effects):** Hanya menyediakan 7 file audio lokal bawaan (`whoosh`, `boom`, `riser`, `knock`, `thunder`, `bell`, `glitch`) yang dicocokkan dengan deteksi kata kunci naskah sederhana (`planAutoSfx`). Efek suara adegan yang spesifik (misal: langkah kaki di salju, desau angin dingin, pintu berderit, suara pedang beradu) belum bisa dibuat.
+2. **Backsound (Musik Latar):** Hanya menghasilkan teks prompt (`MusicPrompt`) lalu mengarahkan pengguna membuka tab browser ke Suno, Udio, atau ElevenLabs Music untuk mengunduh audio manual secara eksternal.
 
-Pengguna sudah memiliki akun dan API Key ElevenLabs yang tersimpan di aplikasi (sebelumnya digunakan untuk TTS suara narator). ElevenLabs menyediakan endpoint resmi:
-- **Text-to-Sound Effects API** (`POST /v1/sound-generation`): Menghasilkan efek suara orisinal berdurasi 0.5–22 detik langsung dari teks deskripsi.
-- **Music API** (`POST /v1/music`): Menghasilkan musik latar instrumental orisinal dari prompt deskripsi gaya & suasana lagu.
+Pengguna telah mengonfigurasi API Key ElevenLabs yang tersimpan aman di aplikasi (sebelumnya digunakan untuk suara narator TTS). ElevenLabs menyediakan endpoint resmi:
+- **Text-to-Sound Effects API** (`POST /v1/sound-generation`): Menghasilkan efek suara berkualitas tinggi (0.5–22 detik) dari teks deskripsi.
+- **Music API** (`POST /v1/music`): Menghasilkan musik latar instrumental dari deskripsi gaya, tempo, dan instrumen.
 
 Tujuan dari fitur ini adalah memaksimalkan potensi ElevenLabs sehingga pengguna dapat:
-1. Menghasilkan musik latar berkualitas tinggi secara instan (1-klik) langsung dari aplikasi dan otomatis terpasang di timeline video.
-2. Menghasilkan SFX kustom melalui prompt manual di timeline editor.
-3. Menghasilkan SFX otomatis berbasis kecerdasan buatan (AI Auto-SFX) yang menganalisis naskah dan prompt visual tiap adegan untuk menaruh efek suara kontekstual di momen dramatis.
-4. Tetap memiliki kendali penuh terhadap penggunaan kuota kredit ElevenLabs dengan adanya estimasi, review cue, dan ketersediaan opsi lokal gratis.
+1. Menghasilkan musik latar instrumental instan di dalam aplikasi tanpa perlu pindah tab browser, dengan durasi yang efisien kuota (preset 30s/60s/120s) dan otomatis di-loop halus di timeline.
+2. Menghasilkan SFX kustom melalui prompt manual di timeline editor dengan preview instan tanpa pemborosan kuota ganda.
+3. Menghasilkan SFX otomatis berbasis naskah (AI Auto-SFX) yang menganalisis adegan visual & cerita untuk menaruh 3–5 efek suara penting di timeline.
+4. Menjaga keamanan kredit berbayar (tidak ada pemborosan kuota diam-diam, SFX berbayar tidak tertimpa SFX gratis, dan partial success tetap disimpan).
 
 ---
 
 ## 2. Goals, Non-Goals, Anti-Goals
 
 ### Goals
-- Mengimplementasikan pemanggilan API ElevenLabs untuk Text-to-Sound Effects (`/v1/sound-generation`).
-- Mengimplementasikan pemanggilan API ElevenLabs untuk Music Generation (`/v1/music`).
-- Menambahkan tombol generate musik latar 1-klik di tab Musik Inspector dengan status loading, durasi target otomatis, dan langsung menautkan audio ke track musik timeline.
-- Menambahkan dialog/panel "Buat SFX dengan ElevenLabs" untuk memasukkan prompt SFX manual, durasi, preview suara, dan tombol pasang di playhead timeline.
-- Mengembangkan perencana SFX cerdas (`planSmartSfx` via LLM) yang mendeteksi momen audio penting dalam adegan cerita, merumuskan prompt bahasa Inggris untuk ElevenLabs Sound Effects, dan menampilkan ringkasan/review sebelum dieksekusi.
-- Menyimpan hasil audio secara konsisten di SQLite database sebagai `Asset` (`kind: 'sfx'` atau `'music'`, `provider: 'elevenlabs'`) dan file audio MP3 lokal di folder proyek.
-- Menyajikan pesan error yang ramah pengguna dalam bahasa Indonesia (kuota habis, model tidak didukung tier langganan, jaringan putus).
+- Mengintegrasikan API ElevenLabs Text-to-Sound Effects (`/v1/sound-generation`).
+- Mengintegrasikan API ElevenLabs Music (`/v1/music`).
+- Menambahkan generator musik latar di Inspector Tab Musik dengan preset durasi hemat kuota (30s, 60s [default], 120s), indikator loading, dan integrasi langsung ke track timeline.
+- Menambahkan modal/panel pembuatan SFX manual (input prompt, slider durasi, tombol preview suara, tombol pasang di playhead).
+- Menambahkan perencana SFX cerdas (`planSmartSfx` via LLM) untuk menganalisis cerita dan menyusun cue audio kontekstual beserta prompt bahasa Inggris untuk ElevenLabs.
+- Menyimpan hasil audio secara konsisten di SQLite database sebagai `Asset` (`kind: 'sfx'` atau `'music'`, `provider: 'elevenlabs'`) dan file audio lokal di folder proyek.
+- Memberikan feedback informatif dalam bahasa Indonesia untuk semua skenario (sukses, parsial, kuota habis, model musik tidak didukung tier).
 
 ### Non-Goals
-- Tidak menggantikan SFX bawaan (7 SFX lokal tetap tersedia sebagai alternatif gratis tanpa kuota).
-- Tidak menghapus opsi impor file audio manual dari komputer (pengguna tetap bebas memakai file MP3/WAV milik sendiri).
-- Tidak mengubah mesin pemutaran audio (`engine.ts`) atau modul ekspor FFmpeg (`exporter.ts`) karena arsitektur timeline dan track SFX/Musik yang ada saat ini sudah mendukung multi-SFX dan musik dengan ducking/volume.
+- Tidak menghapus 7 SFX bawaan gratis maupun fitur impor audio lokal dari komputer.
+- Tidak mengubah engine audio pemutar (`engine.ts`) atau modul render FFmpeg (`exporter.ts`) karena arsitektur Bang Story sudah mendukung multi-SFX, looping musik, dan audio ducking.
 
 ### Anti-Goals
-- **Anti-pemborosan kuota:** Jangan pernah menjalankan generate audio ElevenLabs secara diam-diam di background tanpa instruksi atau persetujuan pengguna.
-- Jangan hardcode prompt bahasa Indonesia ke API ElevenLabs SFX/Music; gunakan terjemahan/optimasi prompt bahasa Inggris agar hasil audio optimal.
+- **Anti-pemborosan kuota:** Tidak ada pemanggilan API ElevenLabs tanpa konfirmasi eksplisit dari pengguna.
+- **Anti-biaya ganda:** Tombol preview suara SFX tidak akan men-generate ulang saat pengguna menekan "Tambahkan ke Timeline".
+- **Anti-data hilang:** SFX ElevenLabs yang sudah berhasil dibuat tidak akan terhapus jika pengguna menjalankan fitur SFX bawaan gratis di kemudian hari.
 
 ---
 
 ## 3. Batasan & Dependensi (Constraints)
 
 1. **Format API ElevenLabs:**
-   - Sound Generation: `POST https://api.elevenlabs.io/v1/sound-generation` dengan payload JSON `{ text, duration_seconds?, prompt_influence?, loop? }`. Response berupa binary stream audio MPEG (`audio/mpeg`).
-   - Music Generation: `POST https://api.elevenlabs.io/v1/music` dengan payload JSON `{ prompt, music_length_ms?, model_id?, force_instrumental: true }`. Response berupa binary stream audio MPEG.
+   - Sound Generation: `POST https://api.elevenlabs.io/v1/sound-generation` dengan JSON `{ text, duration_seconds?, prompt_influence?, loop? }`. Response berupa binary stream audio MPEG (`audio/mpeg`).
+   - Music Generation: `POST https://api.elevenlabs.io/v1/music` dengan JSON `{ prompt, music_length_ms?, model_id?, force_instrumental: true }`. Response berupa binary stream audio MPEG.
 2. **Kunci API & Keamanan:**
-   - Kunci API menggunakan penyimpan aman `secrets.ts` (provider `'elevenlabs'`). Tidak boleh bocor ke log atau renderer.
-3. **Format Penyimpanan & Probe:**
-   - Audio yang diterima (Buffer) disimpan ke `assets/{projectId}/sfx/...` atau `assets/{projectId}/music/...`.
-   - Durasi audio diuji akurat menggunakan FFmpeg `probeDurationMs` bawaan aplikasi sebelum disimpan ke SQLite.
-4. **Prinsip Single Source of Truth:**
-   - Aturan tipe data di `src/shared/types.ts` dan IPC di `src/shared/api.ts` harus disinkronkan secara ketat sesuai aturan arsitektur Bang Story.
+   - Kunci API menggunakan penyimpan aman `secrets.ts` (provider `'elevenlabs'`). Tidak pernah terekspos ke log atau UI renderer.
+3. **Penyimpanan Aset & Probe Durasi:**
+   - File MP3 disimpan ke folder aset proyek (`assets/{projectId}/sfx/...` atau `assets/{projectId}/music/...`).
+   - Durasi audio diuji presisi menggunakan FFmpeg `probeDurationMs` sebelum dimasukkan ke database SQLite.
 
 ---
 
-## 4. Pendekatan yang Dipertimbangkan (Approaches Considered)
+## 4. Pendekatan yang Dipertimbangkan & Terpilih
 
-| Pendekatan | Deskripsi | Kelebihan | Kekurangan |
-|---|---|---|---|
-| **Opsi 1: Studio Audio Manual** | Generate manual per kebutuhan di panel editor (ketik prompt SFX & klik generate musik). | Sangat hemat kuota, kontrol granular 100%. | Lambat; pengguna harus memikirkan dan membuat SFX satu per satu untuk puluhan adegan. |
-| **Opsi 2: Hybrid Smart-Automation (Terpilih)** | 1-klik BGM otomatis dari cerita + AI Auto-SFX per adegan naskah + generator manual di timeline. | Cepat, video langsung sinematik dan hidup, namun pengguna tetap punya kontrol penuh dan review sebelum generate. | Membutuhkan implementasi perencana prompt LLM untuk SFX. |
-| **Opsi 3: BGM Saja + SFX Lokal** | ElevenLabs hanya untuk BGM, SFX hanya menambah koleksi file lokal statis gratis. | Bebas kuota SFX. | Variasi efek suara terbatas, tidak bisa membuat audio spesifik imajinatif sesuai naskah unik. |
-
-**Alasan Memilih Opsi 2:** Selaras dengan filosofi Bang Story yang mengotomatisasi pembuatan video cerita dari naskah namun tetap menyediakan ruang penyuntingan kreatif bagi pembuat konten.
+- **Opsi 1: Studio Audio Manual:** Hemat kuota, tapi melelahkan karena harus membuat SFX satu per satu.
+- **Opsi 2: Hybrid Smart-Automation (Terpilih):** 1-klik BGM instan + AI Auto-SFX per adegan + generator manual. Sangat cepat, video langsung sinematik, tetap fleksibel.
+- **Opsi 3: BGM Saja + SFX Lokal:** Hemat kuota SFX, tapi variasi suara kaku dan terbatas.
 
 ---
 
-## 5. Arsitektur & Desain Rinci
+## 5. Keputusan Teknis & Arsitektur Rinci (Builder Calls)
 
-### A. Layanan Backend (`src/main/services/elevenlabs.ts`)
-Tambahkan fungsi untuk memanggil endpoint suara & musik:
-```ts
-export async function generateSoundEffect(
-  text: string,
-  options?: { durationSeconds?: number; promptInfluence?: number },
-  signal?: AbortSignal
-): Promise<Buffer>
+### A. Strategi Durasi Musik Latar & Efisiensi Kuota (Hasil Konfirmasi)
+- **Preset Durasi:** Pengguna dapat memilih durasi musik di Inspector: **30 detik**, **60 detik (bawaan)**, atau **120 detik**.
+- **Mekanisme Looping:** Mengingat Bang Story sudah memiliki loop audio otomatis di timeline dan FFmpeg exporter (`-stream_loop -1` di `exporter.ts`), trek 60 detik akan diulang secara mulus sepanjang video dan memudar (fade out) di akhir video. Ini menghemat ratusan kredit ElevenLabs dibanding men-generate trek 10–15 menit penuh.
 
-export async function generateMusic(
-  prompt: string,
-  options?: { durationMs?: number; modelId?: string; forceInstrumental?: boolean },
-  signal?: AbortSignal
-): Promise<Buffer>
-```
-Penanganan error:
-- Tangani status 401 (kunci salah), 402 (kuota habis), 404 (model musik tidak tersedia di paket langganan pengguna), dan 429 (rate limit).
+### B. Siklus Hidup SFX Manual (Preview vs. Commit)
+- Pengguna mengetik prompt deskripsi suara & memilih durasi (0.5–10 detik).
+- Saat klik **"Buat & Dengarkan Preview"**:
+  - Aplikasi memanggil API ElevenLabs satu kali.
+  - Hasil audio disimpan di staging lokal dan langsung diputar di modal audio preview.
+  - Aset dicatat sementara di state modal.
+- Saat klik **"Tambahkan ke Timeline"**:
+  - Aset yang sama langsung di-*commit* ke tabel `Asset` proyek dan disisipkan ke timeline (`project.editor.sfx`) pada posisi playhead.
+  - Tidak ada re-generate (kuota dijamin hanya terpotong 1x).
 
-### B. Perencana SFX AI (`src/main/story.ts`)
-Fungsi `planSmartSfx(projectId: string)`:
-1. Mengambil data klip cerita (naskah narasi, visual prompt, durasi tiap adegan).
-2. Meminta LLM (Gemini/penyedia aktif) menyusun daftar 3–6 momen audio paling signifikan di sepanjang video:
-   ```ts
-   export interface SmartSfxCue {
-     clipId: string
-     timeOffsetSec: number // detik relatif dari awal klip
-     name: string          // Nama tampilan ID (misal: "Pintu Berderit")
-     prompt: string        // Prompt deskriptif EN untuk ElevenLabs
-     durationSec: number   // 1.0 - 5.0 detik
-     volumeDb: number      // -12 s/d -6 dB
-   }
-   ```
-3. Mengembalikan daftar cue ke frontend untuk ditinjau oleh pengguna.
+### C. Keamanan SFX Berbayar di Timeline
+- Pada data `SfxItem`:
+  - SFX bawaan gratis menggunakan penanda `auto: true` (sehingga tombol "SFX Otomatis" gratis hanya mengganti SFX lokal).
+  - SFX dari ElevenLabs (baik hasil AI Auto-SFX maupun manual) ditandai dengan `auto: false` atau `provider: 'elevenlabs'`.
+  - Tombol "SFX Otomatis" gratis di `Timeline.tsx` hanya menghapus SFX dengan aset `provider === 'builtin'`. SFX berbayar ElevenLabs tidak akan pernah terhapus secara tidak sengaja.
 
-### C. Alur Pembuatan Aset & Penyimpanan (`src/main/ipc.ts`)
-1. **`assets:generateSfx`**:
-   - Menerima `projectId`, `prompt`, `durationSec`, `name`.
-   - Memanggil `generateSoundEffect`.
-   - Menyimpan buffer ke `assets/sfx/{uuid}.mp3`.
-   - Mengambil durasi via `probeDurationMs`.
-   - Menyimpan ke database SQLite (`insertAsset`) dengan `kind: 'sfx'`, `provider: 'elevenlabs'`.
-   - Mengirim event `emit.asset` dan mengembalikan objek `Asset`.
-2. **`story:generateMusic`**:
-   - Menerima `projectId`, `prompt`, `durationMs`.
-   - Memanggil `generateMusic`.
-   - Menyimpan buffer ke `assets/music/{uuid}.mp3`.
-   - Mengambil durasi via `probeDurationMs`.
-   - Menyimpan ke database SQLite (`insertAsset`) dengan `kind: 'music'`, `provider: 'elevenlabs'`.
-   - Memperbarui `editor.musicAssetId = asset.id`, `musicStartMs = 0`, `musicDuck = true`.
-   - Mengembalikan objek `Asset`.
-
-### D. Tampilan Antarmuka (UI/UX)
-1. **Inspector Tab Musik (`src/renderer/src/pages/project/editor/Inspector.tsx`)**:
-   - Di bawah kotak `MusicPromptSection`, tambahkan kartu tindakan utama:
-     - Tombol **"Generate Musik Latar (ElevenLabs)"** dengan ikon sparkles.
-     - Estimasi durasi (misal 30–60 detik atau sepanjang video).
-     - Indikator status progres / spinner saat proses generate berjalan.
-     - Setelah selesai, track musik otomatis aktif dan audio player siap diputar.
-     - Tombol eksternal "Buka Suno / Udio" tetap dipertahankan sebagai opsi alternatif.
-2. **Timeline Track SFX & Tab Efek (`Timeline.tsx` & `Inspector.tsx`)**:
-   - Di menu header track SFX (sebelah tombol SFX otomatis), tambahkan dropdown/menu:
-     - *SFX Bawaan (Gratis)* -> daftar 7 SFX lokal.
-     - *AI Auto-SFX (ElevenLabs)* -> membuka modal ringkasan cue yang dirancang AI berdasarkan naskah, lalu ada tombol "Generate Semua SFX".
-     - *Ketik Prompt SFX Manual* -> modal sederhana: input deskripsi suara, slider durasi (0.5 - 10s), tombol "Dengarkan Preview", dan tombol "Tambahkan ke Timeline".
+### D. Perencana & Eksekusi Batch AI Auto-SFX
+- **Fungsi `planSmartSfx(projectId)` (`src/main/story.ts`):**
+  - Mengirim ringkasan narasi dan visual prompt tiap babak/adegan ke LLM.
+  - LLM merumuskan 3–5 cue penting: nama tampilan bahasa Indonesia (misal: *"Dentang Lonceng Misterius"*), prompt bahasa Inggris untuk ElevenLabs (misal: *"Heavy antique church bell tolling in empty misty town, reverb"*), detik penempatan di timeline, dan durasi.
+- **Eksekusi Batch & Partial Success:**
+  - Modal di frontend menampilkan daftar cue yang disarankan. Pengguna dapat memilih/centang cue yang ingin di-generate.
+  - Eksekusi berjalan sekuensial dengan progress bar di UI ("Men-generate efek 2 dari 4...").
+  - Jika terjadi kendala jaringan atau kuota habis di tengah proses (misal cue ke-3 gagal), semua cue yang sudah berhasil di-generate tetap disimpan dan dipasang ke timeline. Tidak ada rollback yang membuang kuota.
 
 ---
 
-## 6. Penanganan Masalah & Kasus Khusus (Edge Cases)
+## 6. Antarmuka Pengguna (UI / UX)
 
-1. **Akses Model Musik ElevenLabs:**
-   - Model `music_v1` atau `music_v2` mungkin membutuhkan tier langganan tertentu pada akun ElevenLabs. Jika API mengembalikan error 404 / 403 terkait izin model, sistem akan menampilkan pesan informatif: *"Fitur ElevenLabs Music membutuhkan akses model musik pada akun kamu. Kamu tetap bisa menggunakan prompt ini di Suno/Udio atau membuat SFX."*
-2. **Keterbatasan Kuota Karakter / Kredit:**
-   - Sebelum generate batch SFX, aplikasi menampilkan perkiraan jumlah efek yang akan dibuat (misal: "Akan men-generate 4 efek suara").
-3. **Pembatalan Permintaan (AbortSignal):**
-   - Generator mendukung sinyal pembatalan jika pengguna menutup modal atau membatalkan proses saat request sedang berjalan.
-4. **Ducking & Volume Balancing:**
-   - Musik latar ElevenLabs otomatis mengaktifkan fitur `musicDuck: true` (volume musik otomatis mengecil saat narator berbicara) sesuai standar timeline Bang Story.
+1. **Inspector Tab Musik (`src/renderer/src/pages/project/editor/Inspector.tsx`):**
+   - Kartu terintegrasi "Generate dengan ElevenLabs" di bawah prompt musik AI.
+   - Pilihan preset durasi: 30s / 60s (default) / 120s.
+   - Tombol aksi utama "Generate Musik Latar".
+   - Indikator progres berputar saat proses berlangsung.
+   - Audio langsung otomatis terpasang sebagai musik aktif proyek begitu selesai.
+2. **Timeline Track SFX (`Timeline.tsx`):**
+   - Menu tombol `+` di track SFX:
+     - *SFX Bawaan (Gratis)* -> katalog 7 suara bawaan.
+     - *AI Auto-SFX (ElevenLabs)* -> membuka modal review cue audio cerita.
+     - *Buat SFX Kustom (ElevenLabs)* -> membuka modal generator prompt manual.
+   - Modal Generator Manual: input teks, pilihan durasi, pemutar audio pratinjau, dan tombol "Tambahkan ke Timeline".
+   - Modal AI Auto-SFX: daftar kartu cue yang diidentifikasi dari naskah, tombol uncheck per item, tombol "Generate Terpilih", dan progress bar.
 
 ---
 
-## 7. Rencana Pengujian & Verifikasi (Verification Plan)
+## 7. Rencana Pengujian & Verifikasi
 
-1. **Typecheck & Build:**
-   - `npm run typecheck` harus lulus tanpa error pada `tsconfig.node.json` dan `tsconfig.web.json`.
-   - `npm run build` berhasil mengompilasi proses main, preload, dan renderer ke folder `out/`.
-2. **Uji Fungsional Backend:**
-   - Uji pemanggilan `generateSoundEffect` dan `generateMusic` dengan mock / parameter valid.
-   - Verifikasi file tersimpan di folder aset proyek dan tercatat di database SQLite.
-   - Verifikasi durasi terdeteksi dengan benar oleh FFmpeg `probeDurationMs`.
-3. **Uji Antarmuka (Dev Harness & UI):**
-   - Buka proyek di editor, verifikasi tombol di tab Musik dan tab SFX.
-   - Verifikasi timeline menampilkan klip audio musik dan SFX dengan benar.
-   - Verifikasi engine pemutar memutar audio saat playhead menyentuh SFX dan BGM.
+1. **Verifikasi Tipe & Kompilasi:**
+   - `npm run typecheck` bersih (tanpa error di Node & Web).
+   - `npm run build` berhasil tanpa kendala.
+2. **Pengujian Fungsional:**
+   - Generate BGM dengan preset 60s: pastikan audio terunduh, durasi ter-probe, dan masuk ke track musik timeline.
+   - Generate manual SFX: pastikan preview berbunyi, aset tersimpan, dan masuk ke timeline pada playhead.
+   - Jalankan AI Auto-SFX: pastikan LLM mendeteksi momen naskah, batch berjalan rapi, dan semua SFX terpasang pada waktu yang tepat.
+   - Verifikasi pemutaran di Editor player dan ekspor FFmpeg.
