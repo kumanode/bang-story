@@ -38,6 +38,42 @@ export const VISUAL_STYLES: VisualStyle[] = [
     characterHint: 'a stickman figure with a round white head and thin black line limbs, wearing role-specific costume pieces'
   },
   {
+    id: 'oversimplified',
+    name: 'Stickman OverSimplified',
+    category: '2d',
+    niche: 'Sejarah, biografi, perang',
+    swatch: '#EAB308',
+    ink: '#1F1D1A',
+    prompt:
+      '2D flat vector storytelling illustration frame. Simple stylized stickman characters with round white heads, cute bean-shaped capsule bodies, and thick black noodle limbs. Minimalist cartoon faces with expressive dot eyes and small mouths. Characters wear neat miniature role-specific costume accessories (crowns, hats, uniforms, headcloths) over their capsule bodies. Clean bold outlines, flat colors with light soft shading, detailed historical vector background with depth, no realistic human anatomy. ' +
+      NO_TEXT,
+    characterHint: 'a stylized stickman with a round white head, a simple bean-shaped capsule body, thick noodle limbs, wearing role-specific miniature attire'
+  },
+  {
+    id: 'stickman_comic',
+    name: 'Stickman komedi ekspresif',
+    category: '2d',
+    niche: 'Komedi, santai, cerita viral',
+    swatch: '#EF4444',
+    ink: '#FFFFFF',
+    prompt:
+      'Humorous 2D YouTube storytelling illustration. Stylized white stickman characters with thick bold black contour outlines and a clean white sticker halo border. Exaggerated hilarious facial expressions (wide comical cartoon eyes, open screaming or laughing mouths, dramatic eyebrows). Simple expressive stick limbs in dynamic poses. Vibrant colorful cartoon background with subtle comic action lines, bright energetic mood. ' +
+      NO_TEXT,
+    characterHint: 'an expressive white cartoon stickman with thick black outlines, a subtle white sticker halo, and an exaggerated funny facial expression'
+  },
+  {
+    id: 'stickman_modern',
+    name: 'Stickman modern explainer',
+    category: '2d',
+    niche: 'Sains, teknologi, edukasi',
+    swatch: '#6366F1',
+    ink: '#FFFFFF',
+    prompt:
+      'Sleek modern 2D flat vector explainer frame. Elegant minimalist geometric stickman silhouette characters with clean proportions and glowing neon accent edge lighting. Harmonious deep color palette, volumetric ambient glow, cinematic atmospheric lighting, stylish vector infographic background with soft depth of field. ' +
+      NO_TEXT,
+    characterHint: 'a sleek minimalist geometric stickman silhouette with subtle glowing accent outlines'
+  },
+  {
     id: 'flat',
     name: 'Kartun flat',
     category: '2d',
