@@ -33,6 +33,8 @@ import { useApp } from '../../../store/app'
 import { useProject } from '../../../store/project'
 import { UNKNOWN_AUDIO_MS, updateOverlay, usePlayback, useTrackControls, voiceWindow, type TimelineItem } from './engine'
 import { TransitionButton } from './TransitionButton'
+import { CustomSfxModal } from './CustomSfxModal'
+import { SmartSfxModal } from './SmartSfxModal'
 import { Waveform } from './Waveform'
 
 const LABEL_W = 140
@@ -207,6 +209,41 @@ export function Timeline({
     useTrackControls()
   const { toast } = useApp()
   const [showSfxMenu, setShowSfxMenu] = useState(false)
+  const [showCustomSfxModal, setShowCustomSfxModal] = useState(false)
+  const [showSmartSfxModal, setShowSmartSfxModal] = useState(false)
+
+  const handleCustomSfxAdd = (asset: Asset) => {
+    useProject.getState().addAsset(asset)
+    const currentT = usePlayback.getState().t
+    const sfxItem: SfxItem = {
+      id: crypto.randomUUID(),
+      assetId: asset.id,
+      name: asset.prompt ?? 'SFX',
+      startMs: Math.round(currentT * 1000),
+      durationMs: asset.durationMs ?? 1000,
+      volumeDb: 0,
+      auto: false
+    }
+    updateEditor({ sfx: [...(project?.editor.sfx ?? []), sfxItem] })
+    toast('info', `SFX "${sfxItem.name}" dipasang pada ${timecode(currentT)}`)
+  }
+
+  const handleSmartSfxBatchAdd = (results: { asset: Asset; startMs: number; volumeDb: number }[]) => {
+    const sState = useProject.getState()
+    for (const r of results) {
+      sState.addAsset(r.asset)
+    }
+    const newItems: SfxItem[] = results.map((r) => ({
+      id: crypto.randomUUID(),
+      assetId: r.asset.id,
+      name: r.asset.prompt ?? 'SFX',
+      startMs: r.startMs,
+      durationMs: r.asset.durationMs ?? 1000,
+      volumeDb: r.volumeDb,
+      auto: false
+    }))
+    updateEditor({ sfx: [...(project?.editor.sfx ?? []), ...newItems] })
+  }
 
   const addBuiltinSfx = async (sfxId: string) => {
     if (!project) return
@@ -984,16 +1021,41 @@ export function Timeline({
                   >
                     <button
                       type="button"
-                      onClick={addAutoSfx}
-                      title="Pasang efek suara sesuai kata di narasi dan transisi"
+                      onClick={() => {
+                        setShowSfxMenu(false)
+                        setShowSmartSfxModal(true)
+                      }}
+                      title="AI menganalisis naskah dan membuat efek suara sinematik per momen cerita"
                       className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-xs font-semibold text-accent-dark hover:bg-accent/10"
                     >
-                      <Sparkles className="size-3.5" />
-                      <span>SFX Otomatis</span>
+                      <Sparkles className="size-3.5 text-accent" />
+                      <span>AI Auto-SFX Cerita (ElevenLabs)</span>
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setShowSfxMenu(false)
+                        setShowCustomSfxModal(true)
+                      }}
+                      title="Generate efek suara kustom dari deskripsi teks (ElevenLabs)"
+                      className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-xs font-semibold text-accent-dark hover:bg-accent/10"
+                    >
+                      <AudioLines className="size-3.5 text-accent" />
+                      <span>Buat SFX Kustom (ElevenLabs)</span>
+                    </button>
+                    <div className="my-1 border-t border-line" />
+                    <button
+                      type="button"
+                      onClick={addAutoSfx}
+                      title="Pasang efek suara bawaan gratis sesuai kata di narasi dan transisi"
+                      className="flex w-full items-center justify-between rounded px-2 py-1 text-left text-xs font-medium text-ink hover:bg-sand-2"
+                    >
+                      <span>SFX Otomatis (Gratis)</span>
+                      <span className="text-[10px] text-muted">Lokal</span>
                     </button>
                     <div className="my-1 border-t border-line" />
                     <div className="px-2 py-1 text-[11px] font-semibold uppercase tracking-wider text-muted">
-                      Pustaka SFX Bawaan
+                      Pustaka SFX Bawaan (Gratis)
                     </div>
                     {BUILTIN_SFX.map((s) => (
                       <button
@@ -1010,7 +1072,7 @@ export function Timeline({
                     <button
                       type="button"
                       onClick={addCustomSfx}
-                      className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-xs font-semibold text-accent-dark hover:bg-accent/10"
+                      className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-xs font-semibold text-ink-2 hover:bg-sand-2"
                     >
                       <Plus className="size-3.5" />
                       <span>Unggah File Sendiri...</span>
@@ -1119,6 +1181,24 @@ export function Timeline({
         >
           {badge.text}
         </span>
+      )}
+
+      {project && (
+        <>
+          <CustomSfxModal
+            open={showCustomSfxModal}
+            onClose={() => setShowCustomSfxModal(false)}
+            projectId={project.id}
+            onAdd={handleCustomSfxAdd}
+          />
+          <SmartSfxModal
+            open={showSmartSfxModal}
+            onClose={() => setShowSmartSfxModal(false)}
+            projectId={project.id}
+            items={items}
+            onBatchAdd={handleSmartSfxBatchAdd}
+          />
+        </>
       )}
     </section>
   )
