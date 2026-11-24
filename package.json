@@ -14,6 +14,7 @@
     "typecheck:node": "tsc --noEmit -p tsconfig.node.json",
     "typecheck:web": "tsc --noEmit -p tsconfig.web.json",
     "typecheck": "npm run typecheck:node && npm run typecheck:web",
+    "test": "vitest run",
     "postinstall": "electron-builder install-app-deps",
     "dist": "npm run build && electron-builder --win --x64 --publish never"
   },
@@ -41,6 +42,7 @@
     "tailwindcss": "^4.3.3",
     "typescript": "~5.9.3",
     "vite": "^7.3.6",
+    "vitest": "^4.1.12",
     "zustand": "^5.0.15"
   }
 }

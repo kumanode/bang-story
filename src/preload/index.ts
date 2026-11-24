@@ -22,7 +22,9 @@ const api: StudioApi = {
     save: call('projects:save'),
     remove: call('projects:remove'),
     duplicate: call('projects:duplicate'),
-    setCover: call('projects:setCover')
+    setCover: call('projects:setCover'),
+    diskUsage: call('projects:diskUsage'),
+    pruneAssets: call('projects:pruneAssets')
   },
   story: {
     chapterPlan: call('story:chapterPlan'),
@@ -37,7 +39,9 @@ const api: StudioApi = {
     planSmartSfx: call('story:planSmartSfx'),
     generateMusic: call('story:generateMusic'),
     youtubeMetadata: call('story:youtubeMetadata'),
-    thumbnailConcept: call('story:thumbnailConcept')
+    thumbnailConcept: call('story:thumbnailConcept'),
+    getYoutubePackage: call('story:getYoutubePackage'),
+    saveYoutubePackage: call('story:saveYoutubePackage')
   },
   generate: {
     thumbnail: call('generate:thumbnail'),
@@ -50,6 +54,7 @@ const api: StudioApi = {
     clipsVideo: call('generate:clipsVideo'),
     missingTts: call('generate:missingTts'),
     narration: call('generate:narration'),
+    importNarration: call('generate:importNarration'),
     syncCaptions: call('generate:syncCaptions'),
     cancel: call('generate:cancel'),
     cancelProject: call('generate:cancelProject'),
@@ -106,7 +111,11 @@ const api: StudioApi = {
     download: call('whisper:download'),
     cancel: call('whisper:cancel'),
     remove: call('whisper:remove'),
-    openFolder: call('whisper:openFolder')
+    openFolder: call('whisper:openFolder'),
+    pickModel: call('whisper:pickModel'),
+    clearCustomModel: call('whisper:clearCustomModel'),
+    pickCli: call('whisper:pickCli'),
+    clearCustomCli: call('whisper:clearCustomCli')
   },
   on: {
     storyProgress: listen(EVENTS.storyProgress),

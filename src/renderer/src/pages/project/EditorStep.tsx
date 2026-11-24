@@ -87,9 +87,30 @@ export function EditorStep() {
       } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight') {
         e.preventDefault()
         const s = usePlayback.getState()
-        let rate: 30 | 60 = 30
-        try { rate = frameRateFromStorage(localStorage.getItem('bangstory_export_fps')) } catch { /* Use the default frame rate. */ }
-        s.seek(Math.max(0, Math.min(total, s.t + (e.key === 'ArrowLeft' ? -1 : 1) * frameDuration(rate))))
+        let step = 1
+        if (!e.shiftKey) {
+          let rate: 30 | 60 = 30
+          try { rate = frameRateFromStorage(localStorage.getItem('bangstory_export_fps')) } catch { /* Use the default frame rate. */ }
+          step = frameDuration(rate)
+        }
+        s.seek(Math.max(0, Math.min(total, s.t + (e.key === 'ArrowLeft' ? -1 : 1) * step)))
+      } else if (e.key === 'Home') {
+        e.preventDefault()
+        usePlayback.getState().seek(0)
+      } else if (e.key === 'End') {
+        e.preventDefault()
+        usePlayback.getState().seek(total)
+      } else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'j' || e.key === 'J')) {
+        e.preventDefault()
+        const s = usePlayback.getState()
+        s.seek(Math.max(0, s.t - 2))
+      } else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'k' || e.key === 'K')) {
+        e.preventDefault()
+        usePlayback.getState().toggle()
+      } else if (!e.ctrlKey && !e.metaKey && !e.altKey && (e.key === 'l' || e.key === 'L')) {
+        e.preventDefault()
+        const s = usePlayback.getState()
+        s.seek(Math.min(total, s.t + 2))
       }
     }
     window.addEventListener('keydown', onKey)

@@ -442,6 +442,10 @@ export interface AppSettings {
   videoModel: string
   /** Time captions against the real voice with Whisper after narration is made (when the model is present). */
   whisperAuto: boolean
+  /** Path to an existing local whisper.cpp GGML model (.bin) chosen manually, or null to use the built-in download. */
+  whisperModelPath: string | null
+  /** Optional path to a custom whisper-cli executable (e.g. CUDA/Vulkan GPU build), or null to use the bundled CPU binary. */
+  whisperCliPath: string | null
   /** Penyedia gambar dan video bawaan: Higgsfield atau Flow2API. */
   defaultVisualProvider: VisualProvider
   /** Base URL server Flow2API, termasuk /v1. */
@@ -470,6 +474,16 @@ export interface WhisperStatus {
   received: number
   total: number
   error: string | null
+  /** Whether the active model was downloaded by the app or picked manually from disk. */
+  source: 'builtin' | 'custom' | null
+  /** Active model file path on disk (builtin or custom), or null when not configured. */
+  modelPath: string | null
+  /** File name of the active model, e.g. "ggml-small.bin". */
+  modelName: string | null
+  /** Whether whisper-cli is the bundled CPU binary or a custom user-selected executable (e.g. CUDA/Vulkan). */
+  cliSource: 'builtin' | 'custom'
+  /** Active whisper-cli executable path on disk. */
+  cliPath: string | null
 }
 
 export interface StoryProgressEvent {
@@ -522,4 +536,24 @@ export interface ClipPatchEvent {
 export interface CharacterPatchEvent {
   characterId: string
   patch: Partial<Character>
+}
+
+/** Persisted YouTube metadata, chosen title, and thumbnail concept for a project. */
+export interface YoutubePackage {
+  meta: YoutubeMetadata | null
+  title: string
+  concept: ThumbnailConcept | null
+  withText: boolean
+}
+
+/** Disk usage summary for a project directory, including unreferenced files that can be safely pruned. */
+export interface ProjectDiskUsage {
+  totalBytes: number
+  unusedBytes: number
+  unusedCount: number
+}
+
+export interface PruneAssetsResult {
+  removedFiles: number
+  freedBytes: number
 }

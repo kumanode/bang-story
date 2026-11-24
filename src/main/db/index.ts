@@ -150,6 +150,10 @@ const MIGRATIONS: string[] = [
   // Reviewed hooks and story outlines belong to the project so interrupted writing can resume.
   `
   ALTER TABLE projects ADD COLUMN story_plan_json TEXT;
+  `,
+  // Persisted YouTube titles, description, and thumbnail concept per project.
+  `
+  ALTER TABLE projects ADD COLUMN youtube_json TEXT;
   `
 ]
 

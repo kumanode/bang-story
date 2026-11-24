@@ -23,8 +23,59 @@ interface YtSession {
 
 const EMPTY_SESSION: YtSession = { meta: null, title: '', concept: null, withText: true, jobIds: [] }
 
-// Kept for the session, so closing the dialog does not throw away a package and concept that cost LLM calls.
+// Kept in memory for instant reopen, backed by SQLite so titles and concepts survive app restarts.
 const ytCache = new Map<string, YtSession>()
+
+const EXPORT_PREFS_KEY = 'bangstory_export_prefs'
+
+interface SavedExportPrefs {
+  resolution?: ExportOptions['resolution']
+  fps?: ExportOptions['fps']
+  encoder?: ExportOptions['encoder']
+  burnCaptions?: boolean
+  writeSrt?: boolean
+  normalizeAudio?: boolean
+  duckMusic?: boolean
+}
+
+function loadExportPrefs(): SavedExportPrefs {
+  try {
+    const raw = localStorage.getItem(EXPORT_PREFS_KEY)
+    if (!raw) return {}
+    const p = JSON.parse(raw) as SavedExportPrefs
+    return {
+      resolution: p.resolution === 720 || p.resolution === 1080 || p.resolution === 2160 ? p.resolution : undefined,
+      fps: p.fps === 30 || p.fps === 60 ? p.fps : undefined,
+      encoder: p.encoder === 'cpu' || p.encoder === 'nvenc' ? p.encoder : undefined,
+      burnCaptions: typeof p.burnCaptions === 'boolean' ? p.burnCaptions : undefined,
+      writeSrt: typeof p.writeSrt === 'boolean' ? p.writeSrt : undefined,
+      normalizeAudio: typeof p.normalizeAudio === 'boolean' ? p.normalizeAudio : undefined,
+      duckMusic: typeof p.duckMusic === 'boolean' ? p.duckMusic : undefined
+    }
+  } catch {
+    return {}
+  }
+}
+
+function saveExportPrefs(o: ExportOptions): void {
+  try {
+    localStorage.setItem('bangstory_export_fps', String(o.fps))
+    localStorage.setItem(
+      EXPORT_PREFS_KEY,
+      JSON.stringify({
+        resolution: o.resolution,
+        fps: o.fps,
+        encoder: o.encoder ?? 'cpu',
+        burnCaptions: o.burnCaptions,
+        writeSrt: o.writeSrt,
+        normalizeAudio: o.normalizeAudio,
+        duckMusic: o.duckMusic
+      })
+    )
+  } catch {
+    /* Storage is optional. */
+  }
+}
 
 function slug(s: string): string {
   return (
@@ -50,8 +101,39 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose: () => 
     const next = { ...(ytCache.get(project.id) ?? EMPTY_SESSION), ...patch }
     ytCache.set(project.id, next)
     setYtState(next)
+    if ('meta' in patch || 'title' in patch || 'concept' in patch || 'withText' in patch) {
+      void window.api.story
+        .saveYoutubePackage(project.id, {
+          meta: next.meta,
+          title: next.title,
+          concept: next.concept,
+          withText: next.withText
+        })
+        .catch(() => {})
+    }
   }
-  useEffect(() => setYtState(project ? (ytCache.get(project.id) ?? EMPTY_SESSION) : EMPTY_SESSION), [project?.id])
+  useEffect(() => {
+    if (!project) {
+      setYtState(EMPTY_SESSION)
+      return
+    }
+    const cached = ytCache.get(project.id)
+    if (cached) {
+      setYtState(cached)
+      return
+    }
+    setYtState(EMPTY_SESSION)
+    let live = true
+    void window.api.story.getYoutubePackage(project.id).then((saved) => {
+      if (!live || !saved) return
+      const session: YtSession = { ...saved, jobIds: ytCache.get(project.id)?.jobIds ?? [] }
+      ytCache.set(project.id, session)
+      setYtState(session)
+    })
+    return () => {
+      live = false
+    }
+  }, [project?.id])
   const ytData = yt.meta
   const pickedTitle = yt.title.trim()
   const concept = yt.concept && yt.concept.title === pickedTitle ? yt.concept : null
@@ -152,22 +234,31 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose: () => 
 
   useEffect(() => {
     if (!open || !project) return
-    void window.api.exporter.nvencAvailable().then(setNvenc).catch(() => setNvenc(false))
+    let live = true
     // A finished or failed export is not shown again; an export still running keeps its progress.
     setJobId((id) => (id && isRunning(useProject.getState().jobs[id]) ? id : null))
-    void window.api.exporter.defaultFolder().then((folder) =>
+    const prefs = loadExportPrefs()
+    void Promise.all([
+      window.api.exporter.defaultFolder(),
+      window.api.exporter.nvencAvailable().catch(() => false)
+    ]).then(([folder, hasNvenc]) => {
+      if (!live) return
+      setNvenc(hasNvenc)
       setOpts({
         fileName: slug(project.title),
-        resolution: 1080,
-        fps: 30,
-        encoder: 'cpu',
-        burnCaptions: project.editor.captionStyle !== 'none',
-        writeSrt: false,
-        normalizeAudio: true,
-        duckMusic: project.editor.duckMusic,
+        resolution: prefs.resolution ?? 1080,
+        fps: prefs.fps ?? 30,
+        encoder: prefs.encoder === 'nvenc' && hasNvenc ? 'nvenc' : 'cpu',
+        burnCaptions: project.editor.captionStyle === 'none' ? false : (prefs.burnCaptions ?? true),
+        writeSrt: prefs.writeSrt ?? false,
+        normalizeAudio: prefs.normalizeAudio ?? true,
+        duckMusic: project.editor.musicAssetId ? (prefs.duckMusic ?? project.editor.duckMusic) : false,
         folder
       })
-    )
+    })
+    return () => {
+      live = false
+    }
   }, [open])
 
   if (!project || !opts) return null
@@ -181,10 +272,9 @@ export function ExportDialog({ open, onClose }: { open: boolean; onClose: () => 
   const res = RESOLUTIONS.find((r) => r.id === opts.resolution)!
   const sizeMb = Math.round((totalMs / 1000) * res.mb * (opts.fps === 60 ? 1.5 : 1))
   const set = (p: Partial<ExportOptions>): void => {
-    setOpts({ ...opts, ...p })
-    if (p.fps) {
-      try { localStorage.setItem('bangstory_export_fps', String(p.fps)) } catch { /* Storage is optional. */ }
-    }
+    const next = { ...opts, ...p }
+    setOpts(next)
+    saveExportPrefs(next)
   }
 
   const start = async (): Promise<void> => {

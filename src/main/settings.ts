@@ -15,6 +15,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   imageModel: DEFAULT_IMAGE_MODEL,
   videoModel: DEFAULT_VIDEO_MODEL,
   whisperAuto: true,
+  whisperModelPath: null,
+  whisperCliPath: null,
   defaultVisualProvider: 'flow2api',
   flow2apiBaseUrl: 'http://localhost:8000/v1',
   flow2apiImageModel: 'gemini-3.1-flash-image',
@@ -51,6 +53,8 @@ export function getSettings(): AppSettings {
   if (out.theme !== 'light' && out.theme !== 'dark' && out.theme !== 'system') {
     out.theme = 'system'
   }
+  out.whisperModelPath = typeof out.whisperModelPath === 'string' && out.whisperModelPath.trim() ? out.whisperModelPath.trim() : null
+  out.whisperCliPath = typeof out.whisperCliPath === 'string' && out.whisperCliPath.trim() ? out.whisperCliPath.trim() : null
   // Profiles are written from the renderer too; a malformed entry must not break the Idea step or script writing.
   out.storyStyleProfiles = Array.isArray(out.storyStyleProfiles)
     ? out.storyStyleProfiles.filter((p) => p && typeof p.id === 'string' && typeof p.name === 'string' && typeof p.guidance === 'string')

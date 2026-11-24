@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AlertTriangle, ArrowRight, Copy, FolderOpen, MoreHorizontal, Plus, RefreshCw, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
+import { AlertTriangle, ArrowRight, Copy, FolderOpen, HardDrive, MoreHorizontal, Plus, RefreshCw, Search, SlidersHorizontal, Trash2 } from 'lucide-react'
 import { DURATIONS, LANGUAGES, clipCountFor, llmName } from '@shared/models'
 import { getStyle } from '@shared/styles'
 import type { ApiProvider, AppSettings, AspectRatio, KeyStatus, ProjectStatus, ProjectSummary, TtsProvider } from '@shared/types'
@@ -173,6 +173,28 @@ export function Home() {
     try {
       await window.api.projects.duplicate(p.id)
       refresh()
+    } catch (e) {
+      toast('error', errorText(e))
+    }
+  }
+
+  const prune = async (p: ProjectSummary): Promise<void> => {
+    const fmtMb = (bytes: number): string =>
+      bytes >= 1_000_000 ? `${(bytes / 1_000_000).toFixed(1).replace('.', ',')} MB` : `${Math.max(1, Math.round(bytes / 1000))} KB`
+    try {
+      const usage = await window.api.projects.diskUsage(p.id)
+      if (usage.unusedCount === 0) {
+        toast('info', `Proyek ini sudah bersih (total ${fmtMb(usage.totalBytes)}).`)
+        return
+      }
+      const ok = await confirmDialog({
+        title: 'Bersihkan file lama?',
+        body: `Ditemukan ${usage.unusedCount} file lama yang tidak terpakai (${fmtMb(usage.unusedBytes)} dari total ${fmtMb(usage.totalBytes)}). Semua klip aktif, karakter, musik, overlay, dan thumbnail tetap aman.`,
+        confirm: `Bersihkan (${fmtMb(usage.unusedBytes)})`
+      })
+      if (!ok) return
+      const res = await window.api.projects.pruneAssets(p.id)
+      toast('success', `Berhasil menghapus ${res.removedFiles} file lama (${fmtMb(res.freedBytes)} dibebaskan).`)
     } catch (e) {
       toast('error', errorText(e))
     }
@@ -360,6 +382,7 @@ export function Home() {
                       items={[
                         { label: 'Buka', icon: <FolderOpen className="size-4" />, run: () => go({ name: 'project', id: p.id }) },
                         { label: 'Duplikat', icon: <Copy className="size-4" />, run: () => void duplicate(p) },
+                        { label: 'Bersihkan file lama', icon: <HardDrive className="size-4" />, run: () => void prune(p) },
                         { label: 'Hapus', icon: <Trash2 className="size-4" />, danger: true, run: () => void remove(p) }
                       ]}
                     />

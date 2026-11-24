@@ -40,8 +40,15 @@ export function ProjectPage({ id }: { id: string }) {
         void useProject.getState().save()
       }
     }
+    const onUnload = (): void => {
+      if (useProject.getState().saveState === 'dirty') void useProject.getState().flush()
+    }
     window.addEventListener('keydown', onKey)
-    return () => window.removeEventListener('keydown', onKey)
+    window.addEventListener('beforeunload', onUnload)
+    return () => {
+      window.removeEventListener('keydown', onKey)
+      window.removeEventListener('beforeunload', onUnload)
+    }
   }, [])
 
   if (!loaded || !project)

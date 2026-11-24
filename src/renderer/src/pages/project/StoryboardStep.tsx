@@ -18,6 +18,7 @@ import {
   RefreshCw,
   Sparkles,
   Trash2,
+  Upload,
   Volume2,
   X
 } from 'lucide-react'
@@ -915,6 +916,15 @@ export function StoryboardStep() {
   }
 
   const narration = useNarration()
+  const importVoice = async (): Promise<void> => {
+    try {
+      await flush()
+      const job = await window.api.generate.importNarration(project.id)
+      if (job) useProject.getState().upsertJob(job)
+    } catch (e) {
+      toast('error', errorText(e))
+    }
+  }
   // Videos are made last: the voice must be final so each video matches its clip length. Clips are picked in
   // the video dialog, so only some of them need a picture.
   const readyForVideo =
@@ -1002,6 +1012,14 @@ export function StoryboardStep() {
               : narration.stale > 0
                 ? `Perbarui suara narasi (${narration.stale})`
                 : 'Rekam ulang suara narasi'}
+        </Button>
+        <Button
+          icon={<Upload className="size-[16px]" />}
+          disabled={narration.running || !clips.some((c) => c.narration.trim())}
+          onClick={() => void importVoice()}
+          title="Import rekaman suara narasi sendiri lalu potong otomatis per adegan"
+        >
+          Import suara
         </Button>
         <Button
           className="border-[1.5px] border-ink font-semibold"

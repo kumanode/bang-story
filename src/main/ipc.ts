@@ -14,7 +14,8 @@ import type {
   ThumbnailRequest,
   TtsProvider,
   VoiceOption,
-  WordTiming
+  WordTiming,
+  YoutubePackage
 } from '@shared/types'
 import { clearExportCache, nvencAvailable, startExport } from './exporter'
 import {
@@ -32,8 +33,8 @@ import {
   setActiveAsset
 } from './generation'
 import { cancelJob, cancelProjectJobs } from './jobs'
-import { generateNarration, syncCaptions } from './narration'
-import { cancelDownload, downloadModel, openModelFolder, removeModel, whisperStatus } from './whisper'
+import { generateNarration, importNarrationAudio, syncCaptions } from './narration'
+import { cancelDownload, clearCustomCli, clearCustomModel, downloadModel, openModelFolder, removeModel, setCustomCli, setCustomModel, whisperStatus } from './whisper'
 import { assetAbsPath, sfxDir } from './paths'
 import { detachVoice, splitClip } from './editing'
 import { emit } from './events'
@@ -44,11 +45,15 @@ import {
   getBundle,
   getClip,
   getProject,
+  getYoutubePackage,
   insertAsset,
   listProjects,
   patchClip,
+  projectDiskUsage,
+  pruneUnusedAssets,
   removeProject,
   saveSnapshot,
+  saveYoutubePackage,
   touchProject,
   updateAssetMeta
 } from './repo'
@@ -100,6 +105,8 @@ export function registerIpc(): void {
     return removed
   })
   handle('projects:duplicate', (id: string) => duplicateProject(id))
+  handle('projects:diskUsage', (id: string) => projectDiskUsage(id))
+  handle('projects:pruneAssets', (id: string) => pruneUnusedAssets(id))
   handle('projects:setCover', (projectId: string, clipId: string) => {
     const clip = getClip(clipId)
     if (!clip.imageAssetId) throw new Error('Klip harus memiliki gambar agar bisa dijadikan sampul proyek.')
@@ -139,6 +146,16 @@ export function registerIpc(): void {
     return asset
   })
   handle('story:youtubeMetadata', (projectId: string) => generateYoutubeMetadata(projectId))
+  handle('story:getYoutubePackage', (projectId: string) => getYoutubePackage(projectId))
+  handle('story:saveYoutubePackage', (projectId: string, pkg: YoutubePackage) => {
+    getProject(projectId)
+    saveYoutubePackage(projectId, {
+      meta: pkg?.meta ?? null,
+      title: String(pkg?.title ?? ''),
+      concept: pkg?.concept ?? null,
+      withText: pkg?.withText !== false
+    })
+  })
   handle('story:visuals', (projectId: string, mode: 'missing' | 'all') => generateVisuals(projectId, mode === 'all' ? 'all' : 'missing'))
 
   handle('generate:clipImage', (clipId: string) => generateClipImage(clipId))
@@ -164,6 +181,17 @@ export function registerIpc(): void {
   handle('generate:cancelProject', (projectId: string, kind?: string) => cancelProjectJobs(projectId, kind))
   handle('generate:missingTts', (projectId: string) => generateMissingTts(projectId))
   handle('generate:narration', (projectId: string, mode: 'missing' | 'all') => generateNarration(projectId, mode === 'all' ? 'all' : 'missing'))
+  handle('generate:importNarration', async (projectId: string) => {
+    const win = BrowserWindow.getFocusedWindow()
+    const opts = {
+      title: 'Pilih file rekaman suara narasi',
+      filters: [{ name: 'Audio', extensions: ['wav', 'mp3', 'm4a', 'ogg', 'flac'] }],
+      properties: ['openFile' as const]
+    }
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled || !res.filePaths[0]) return null
+    return importNarrationAudio(projectId, res.filePaths[0])
+  })
   handle('generate:syncCaptions', (projectId: string, mode?: 'stale' | 'all' | 'force') => syncCaptions(projectId, mode === 'force' ? 'force' : mode === 'all' ? 'all' : 'stale'))
 
   handle('whisper:status', () => whisperStatus())
@@ -174,6 +202,36 @@ export function registerIpc(): void {
   handle('whisper:cancel', () => cancelDownload())
   handle('whisper:remove', () => removeModel())
   handle('whisper:openFolder', () => openModelFolder())
+  handle('whisper:pickModel', async () => {
+    const win = BrowserWindow.getFocusedWindow()
+    const opts = {
+      title: 'Pilih file model Whisper (GGML .bin)',
+      filters: [
+        { name: 'Model Whisper GGML', extensions: ['bin'] },
+        { name: 'Semua file', extensions: ['*'] }
+      ],
+      properties: ['openFile' as const]
+    }
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled || !res.filePaths[0]) return null
+    return setCustomModel(res.filePaths[0])
+  })
+  handle('whisper:clearCustomModel', () => clearCustomModel())
+  handle('whisper:pickCli', async () => {
+    const win = BrowserWindow.getFocusedWindow()
+    const opts = {
+      title: 'Pilih biner whisper-cli (opsional GPU CUDA/Vulkan)',
+      filters: [
+        { name: 'Executable', extensions: ['exe'] },
+        { name: 'Semua file', extensions: ['*'] }
+      ],
+      properties: ['openFile' as const]
+    }
+    const res = win ? await dialog.showOpenDialog(win, opts) : await dialog.showOpenDialog(opts)
+    if (res.canceled || !res.filePaths[0]) return null
+    return setCustomCli(res.filePaths[0])
+  })
+  handle('whisper:clearCustomCli', () => clearCustomCli())
   handle('generate:cancel', (jobId: string) => cancelJob(jobId))
   handle('generate:estimate', (kind: 'image' | 'video', modelId: string, aspect: AspectRatio, seconds?: number, resolution?: string | null) =>
     estimateCredits(kind, modelId, aspect, seconds, resolution)

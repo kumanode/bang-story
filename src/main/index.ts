@@ -1,12 +1,14 @@
 import { existsSync, renameSync } from 'node:fs'
 import { join } from 'node:path'
-import { app, BrowserWindow, session, shell } from 'electron'
+import { app, BrowserWindow, dialog, screen, session, shell } from 'electron'
 import { closeDb, getDb } from './db'
 import { attachDevHarness, prepareHarness } from './devharness'
 import { resumeJobs } from './generation'
 import { registerIpc } from './ipc'
+import { activeJobCount, cancelAllJobs } from './jobs'
 import { handleStudioProtocol, registerSchemes } from './protocol'
 import { warmUpEncryption } from './secrets'
+import { readCache, writeCache } from './settings'
 
 /**
  * The app used to be called "Studio Cerita". Its data folder (projects, database, saved keys) moves to the
@@ -46,10 +48,40 @@ function identifyToYouTube(): void {
   })
 }
 
+interface WindowState {
+  x?: number
+  y?: number
+  width: number
+  height: number
+  maximized?: boolean
+}
+
+function loadWindowState(): WindowState {
+  const fallback: WindowState = { width: 1440, height: 900 }
+  try {
+    const saved = readCache<WindowState>('window:bounds')?.value
+    if (!saved || !Number.isFinite(saved.width) || !Number.isFinite(saved.height)) return fallback
+    const width = Math.max(1180, Math.round(saved.width))
+    const height = Math.max(720, Math.round(saved.height))
+    if (typeof saved.x === 'number' && typeof saved.y === 'number' && Number.isFinite(saved.x) && Number.isFinite(saved.y)) {
+      const display = screen.getDisplayMatching({ x: saved.x, y: saved.y, width, height })
+      const area = display.workArea
+      const visible = saved.x < area.x + area.width - 80 && saved.x + width > area.x + 80 && saved.y < area.y + area.height - 80 && saved.y + height > area.y + 40
+      if (visible) return { x: Math.round(saved.x), y: Math.round(saved.y), width, height, maximized: saved.maximized === true }
+    }
+    return { width, height, maximized: saved.maximized === true }
+  } catch {
+    return fallback
+  }
+}
+
 function createWindow(): void {
+  const initial = loadWindowState()
   const win = new BrowserWindow({
-    width: 1440,
-    height: 900,
+    x: initial.x,
+    y: initial.y,
+    width: initial.width,
+    height: initial.height,
     minWidth: 1180,
     minHeight: 720,
     show: false,
@@ -64,7 +96,54 @@ function createWindow(): void {
     }
   })
 
-  win.once('ready-to-show', () => win.show())
+  win.once('ready-to-show', () => {
+    if (initial.maximized) win.maximize()
+    win.show()
+  })
+
+  let saveTimer: ReturnType<typeof setTimeout> | null = null
+  const persistBounds = (): void => {
+    if (win.isDestroyed() || win.isMinimized()) return
+    const maximized = win.isMaximized()
+    const b = maximized ? win.getNormalBounds() : win.getBounds()
+    try {
+      writeCache('window:bounds', { x: b.x, y: b.y, width: b.width, height: b.height, maximized })
+    } catch {
+      /* Window state persistence is best-effort. */
+    }
+  }
+  const scheduleBoundsSave = (): void => {
+    if (saveTimer) clearTimeout(saveTimer)
+    saveTimer = setTimeout(persistBounds, 400)
+  }
+  win.on('resize', scheduleBoundsSave)
+  win.on('move', scheduleBoundsSave)
+  win.on('maximize', scheduleBoundsSave)
+  win.on('unmaximize', scheduleBoundsSave)
+
+  let forceClosing = false
+  win.on('close', (e) => {
+    if (saveTimer) clearTimeout(saveTimer)
+    persistBounds()
+    if (!forceClosing && !process.env.STUDIO_CAPTURE_PLAN && activeJobCount() > 0) {
+      e.preventDefault()
+      const choice = dialog.showMessageBoxSync(win, {
+        type: 'warning',
+        buttons: ['Batal', 'Tetap tutup'],
+        defaultId: 0,
+        cancelId: 0,
+        title: 'Masih ada proses berjalan',
+        message: 'Ekspor atau pembuatan konten masih berjalan di latar belakang.',
+        detail: 'Jika kamu menutup aplikasi sekarang, proses yang sedang berjalan akan dibatalkan.'
+      })
+      if (choice === 1) {
+        forceClosing = true
+        cancelAllJobs()
+        win.close()
+      }
+    }
+  })
+
   identifyToYouTube()
   attachDevHarness(win)
 
@@ -113,5 +192,8 @@ if (!single) {
     if (process.platform !== 'darwin') app.quit()
   })
 
-  app.on('will-quit', () => closeDb())
+  app.on('will-quit', () => {
+    cancelAllJobs()
+    closeDb()
+  })
 }

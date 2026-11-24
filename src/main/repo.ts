@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto'
-import { cpSync, existsSync, rmSync } from 'node:fs'
-import { join } from 'node:path'
+import { cpSync, existsSync, readdirSync, rmSync, statSync } from 'node:fs'
+import { join, resolve } from 'node:path'
 import type {
   Asset,
   AssetKind,
@@ -15,9 +15,12 @@ import type {
   NewProjectInput,
   Project,
   ProjectBundle,
+  ProjectDiskUsage,
   ProjectSnapshot,
   ProjectSummary,
-  StoryPlan
+  PruneAssetsResult,
+  StoryPlan,
+  YoutubePackage
 } from '@shared/types'
 import { visualSourceOf } from '@shared/script'
 import { detectGender, FEMALE_GEMINI_VOICES, MALE_GEMINI_VOICES, geminiVoiceGender } from '@shared/models'
@@ -878,4 +881,125 @@ export function activeJobFor(target: { clipId?: string; characterId?: string }, 
     )
     .get(kind, target.clipId ?? target.characterId) as Row | undefined
   return r ? toJob(r) : null
+}
+
+export function getYoutubePackage(projectId: string): YoutubePackage | null {
+  const r = getDb().prepare('SELECT youtube_json FROM projects WHERE id = ?').get(projectId) as { youtube_json: string | null } | undefined
+  if (!r?.youtube_json) return null
+  try {
+    const parsed = JSON.parse(r.youtube_json) as Partial<YoutubePackage>
+    return {
+      meta: parsed.meta ?? null,
+      title: typeof parsed.title === 'string' ? parsed.title : '',
+      concept: parsed.concept ?? null,
+      withText: parsed.withText !== false
+    }
+  } catch {
+    return null
+  }
+}
+
+export function saveYoutubePackage(projectId: string, pkg: YoutubePackage): void {
+  getDb()
+    .prepare('UPDATE projects SET youtube_json = ?, updated_at = ? WHERE id = ?')
+    .run(JSON.stringify(pkg), Date.now(), projectId)
+}
+
+function collectFiles(dir: string): { path: string; size: number }[] {
+  if (!existsSync(dir)) return []
+  const out: { path: string; size: number }[] = []
+  for (const entry of readdirSync(dir, { withFileTypes: true })) {
+    const full = join(dir, entry.name)
+    if (entry.isDirectory()) out.push(...collectFiles(full))
+    else if (entry.isFile()) {
+      try {
+        out.push({ path: resolve(full), size: statSync(full).size })
+      } catch {
+        /* Skip files that vanished mid-scan. */
+      }
+    }
+  }
+  return out
+}
+
+function activeAssetSet(projectId: string): { keptIds: Set<string>; keptPaths: Set<string>; unusedIds: string[] } {
+  const project = getProject(projectId)
+  const chars = charactersOf(projectId)
+  const clips = clipsOf(projectId)
+  const assets = (getDb().prepare('SELECT * FROM assets WHERE project_id = ?').all(projectId) as Row[]).map(toAsset)
+  const keptIds = new Set<string>()
+  if (project.coverAssetId) keptIds.add(project.coverAssetId)
+  if (project.editor.musicAssetId) keptIds.add(project.editor.musicAssetId)
+  for (const ov of project.editor.overlays ?? []) {
+    if (ov.kind === 'image' && ov.assetId) keptIds.add(ov.assetId)
+  }
+  for (const sfx of project.editor.sfx ?? []) {
+    if (sfx.assetId) keptIds.add(sfx.assetId)
+  }
+  for (const ch of chars) {
+    if (ch.sheetAssetId) keptIds.add(ch.sheetAssetId)
+  }
+  for (const c of clips) {
+    if (c.imageAssetId) keptIds.add(c.imageAssetId)
+    if (c.videoAssetId) keptIds.add(c.videoAssetId)
+    if (c.audioAssetId) keptIds.add(c.audioAssetId)
+  }
+  const keptPaths = new Set<string>()
+  const unusedIds: string[] = []
+  const root = projectDir(projectId)
+  for (const a of assets) {
+    if (keptIds.has(a.id) || a.meta.thumbnail === true) {
+      keptIds.add(a.id)
+      keptPaths.add(resolve(join(root, a.localPath)))
+    } else {
+      unusedIds.push(a.id)
+    }
+  }
+  return { keptIds, keptPaths, unusedIds }
+}
+
+export function projectDiskUsage(projectId: string): ProjectDiskUsage {
+  const { keptPaths } = activeAssetSet(projectId)
+  const files = collectFiles(projectDir(projectId))
+  let totalBytes = 0
+  let unusedBytes = 0
+  let unusedCount = 0
+  for (const f of files) {
+    totalBytes += f.size
+    if (!keptPaths.has(f.path)) {
+      unusedBytes += f.size
+      unusedCount++
+    }
+  }
+  return { totalBytes, unusedBytes, unusedCount }
+}
+
+/** Deletes unreferenced asset rows and orphaned files in a project folder while keeping all active media and thumbnails. */
+export function pruneUnusedAssets(projectId: string): PruneAssetsResult {
+  const active = getDb()
+    .prepare("SELECT 1 FROM jobs WHERE project_id = ? AND status IN ('queued','running') LIMIT 1")
+    .get(projectId)
+  if (active) throw new Error('Tunggu proses yang sedang berjalan di proyek ini selesai dulu sebelum membersihkan file.')
+  const { keptPaths, unusedIds } = activeAssetSet(projectId)
+  const files = collectFiles(projectDir(projectId))
+  let removedFiles = 0
+  let freedBytes = 0
+  for (const f of files) {
+    if (!keptPaths.has(f.path)) {
+      try {
+        rmSync(f.path, { force: true })
+        removedFiles++
+        freedBytes += f.size
+      } catch {
+        /* Skip locked files. */
+      }
+    }
+  }
+  if (unusedIds.length) {
+    const del = getDb().prepare('DELETE FROM assets WHERE id = ?')
+    getDb().transaction(() => {
+      for (const id of unusedIds) del.run(id)
+    })()
+  }
+  return { removedFiles, freedBytes }
 }

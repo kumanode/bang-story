@@ -19,8 +19,10 @@ import type {
   MusicPrompt,
   NewProjectInput,
   ProjectBundle,
+  ProjectDiskUsage,
   ProjectSnapshot,
   ProjectSummary,
+  PruneAssetsResult,
   SceneRevision,
   SmartSfxCue,
   StoryBrief,
@@ -31,7 +33,8 @@ import type {
   ThumbnailConcept,
   ThumbnailRequest,
   VoiceOption,
-  YoutubeMetadata
+  YoutubeMetadata,
+  YoutubePackage
 } from './types'
 
 /** The typed surface the preload script exposes as `window.api`. */
@@ -44,6 +47,8 @@ export interface StudioApi {
     remove(id: string): Promise<void>
     duplicate(id: string): Promise<ProjectSummary>
     setCover(projectId: string, clipId: string): Promise<{ coverAssetId: string }>
+    diskUsage(id: string): Promise<ProjectDiskUsage>
+    pruneAssets(id: string): Promise<PruneAssetsResult>
   }
   story: {
     /** Builds the complete editable chapter plan in one LLM request. */
@@ -72,6 +77,10 @@ export interface StudioApi {
     youtubeMetadata(projectId: string): Promise<YoutubeMetadata>
     /** A thumbnail idea written for the title the user picked. */
     thumbnailConcept(projectId: string, title: string): Promise<ThumbnailConcept>
+    /** Loads the saved YouTube metadata and thumbnail concept for a project. */
+    getYoutubePackage(projectId: string): Promise<YoutubePackage | null>
+    /** Saves the YouTube metadata, chosen title, and thumbnail concept for a project. */
+    saveYoutubePackage(projectId: string, pkg: YoutubePackage): Promise<void>
   }
   generate: {
     thumbnail(projectId: string, req: ThumbnailRequest): Promise<Job>
@@ -86,6 +95,8 @@ export interface StudioApi {
     missingTts(projectId: string): Promise<Job[]>
     /** Voices scenes in one continuous take and cuts it per scene: those without a voice, or all of them. */
     narration(projectId: string, mode: 'missing' | 'all'): Promise<Job>
+    /** Imports a user's own voice-over recording and slices/aligns it per scene. Null when cancelled. */
+    importNarration(projectId: string): Promise<Job | null>
     /** Re-times caption words of voiced scenes against the audio with the local Whisper model. */
     syncCaptions(projectId: string, mode?: 'stale' | 'all' | 'force'): Promise<Job>
     cancel(jobId: string): Promise<void>
@@ -155,6 +166,14 @@ export interface StudioApi {
     cancel(): Promise<void>
     remove(): Promise<void>
     openFolder(): Promise<void>
+    /** Lets the user select an existing whisper.cpp GGML .bin model on disk. Null when dialog is cancelled. */
+    pickModel(): Promise<WhisperStatus | null>
+    /** Unlinks the manually selected model path without deleting the user's file on disk. */
+    clearCustomModel(): Promise<WhisperStatus>
+    /** Lets the user pick a custom whisper-cli binary (e.g. GPU CUDA/Vulkan build). Null when cancelled. */
+    pickCli(): Promise<WhisperStatus | null>
+    /** Reverts whisper-cli back to the bundled binary. */
+    clearCustomCli(): Promise<WhisperStatus>
   }
   on: {
     storyProgress(cb: (progress: StoryProgressEvent) => void): () => void

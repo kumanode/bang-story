@@ -759,7 +759,7 @@ function CaptionTiming() {
             </div>
           ) : (
             <p className="text-[13px] text-ink-2">
-              Unduh model Whisper Small di{' '}
+              Unduh atau pilih model Whisper di{' '}
               <button
                 type="button"
                 onClick={async () => {

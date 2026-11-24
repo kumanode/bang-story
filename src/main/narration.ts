@@ -1,7 +1,7 @@
 import { execFile } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
-import { dirname, join } from 'node:path'
+import { copyFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { basename, dirname, extname, join } from 'node:path'
 import ffmpegStatic from 'ffmpeg-static'
 import { WHISPER_TIMING, captionNeedsSync, estimateWordTimings } from '@shared/captions'
 import { estimateNarrationMs } from '@shared/script'
@@ -120,11 +120,14 @@ async function whisperTimes(take: string, words: string[], p: Project, total: nu
   }
 }
 
-async function geminiTake(p: Project, voice: string, group: Clip[], tmp: string, ctx: TaskCtx, note: () => void): Promise<Segment[]> {
-  // A long pause between scenes gives the cutter a clear gap to find.
-  const wav = await gemini.speak(group.map((c) => c.narration.trim()).join('\n<long pause>\n'), voice, p.language, ctx.signal)
-  const take = join(tmp, `take-${randomUUID()}.wav`)
-  writeFileSync(take, wav)
+async function splitTakeIntoSegments(
+  take: string,
+  group: Clip[],
+  p: Project,
+  tmp: string,
+  ctx: TaskCtx,
+  note: () => void
+): Promise<Segment[]> {
   const total = (await probeDurationMs(take)) / 1000
   const silences = await detectSilences(take, ctx.signal)
 
@@ -177,6 +180,14 @@ async function geminiTake(p: Project, voice: string, group: Clip[], tmp: string,
   return out
 }
 
+async function geminiTake(p: Project, voice: string, group: Clip[], tmp: string, ctx: TaskCtx, note: () => void): Promise<Segment[]> {
+  // A long pause between scenes gives the cutter a clear gap to find.
+  const wav = await gemini.speak(group.map((c) => c.narration.trim()).join('\n<long pause>\n'), voice, p.language, ctx.signal)
+  const take = join(tmp, `take-${randomUUID()}.wav`)
+  writeFileSync(take, wav)
+  return splitTakeIntoSegments(take, group, p, tmp, ctx, note)
+}
+
 async function elevenTake(
   p: Project,
   voice: string,
@@ -221,7 +232,7 @@ async function elevenTake(
   return out
 }
 
-function store(p: Project, s: Segment, voice: string, takeId: string, bytes: Buffer): void {
+function store(p: Project, s: Segment, voice: string, takeId: string, bytes: Buffer, providerOverride?: { provider: string; model: string }): void {
   const rel = `audio/${randomUUID()}.wav`
   const abs = assetAbsPath(p.id, rel)
   mkdirSync(dirname(abs), { recursive: true })
@@ -230,8 +241,8 @@ function store(p: Project, s: Segment, voice: string, takeId: string, bytes: Buf
     projectId: p.id,
     clipId: s.clip.id,
     kind: 'audio',
-    provider: p.ttsProvider,
-    model: p.ttsProvider === 'gemini' ? getSettings().geminiTtsModel : getSettings().elevenModel,
+    provider: providerOverride?.provider ?? p.ttsProvider,
+    model: providerOverride?.model ?? (p.ttsProvider === 'gemini' ? getSettings().geminiTtsModel : getSettings().elevenModel),
     prompt: s.clip.narration,
     localPath: rel,
     durationMs: s.durationMs,
@@ -244,6 +255,41 @@ function store(p: Project, s: Segment, voice: string, takeId: string, bytes: Buf
   const patch = { audioAssetId: asset.id, durationMs, voiceInMs: 0, voiceOutMs: null, voiceStartMs: 0 }
   patchClip(s.clip.id, patch)
   emit.clip({ clipId: s.clip.id, patch })
+}
+
+/** Imports a creator's own full voice-over recording, slices it per scene, and aligns captions via Whisper when available. */
+export function importNarrationAudio(projectId: string, sourceFile: string): Job {
+  const running = activeProjectJob(projectId, 'narration')
+  if (running) return running
+  getProject(projectId)
+  const targets = clipsOf(projectId).filter((c) => c.narration.trim())
+  if (!targets.length) throw new Error('Belum ada naskah narasi di adegan proyek ini.')
+  const job = insertJob({ projectId, kind: 'narration', provider: 'local', payload: { mode: 'import', clipIds: targets.map((c) => c.id) } })
+  emit.job(job)
+  return runJob(job, 'whisper', async (ctx) => {
+    const p = getProject(projectId)
+    const clips = targets.map((c) => getClip(c.id)).filter((c) => c.narration.trim())
+    const tmp = join(dataDir(), 'tmp', `narration-import-${ctx.jobId}`)
+    mkdirSync(tmp, { recursive: true })
+    const takeId = randomUUID()
+    try {
+      ctx.progress(0.1, 'Menyiapkan rekaman suara lokal')
+      const ext = extname(sourceFile).toLowerCase() || '.wav'
+      const localCopy = join(tmp, `source-${randomUUID()}${ext}`)
+      copyFileSync(sourceFile, localCopy)
+      const segments = await splitTakeIntoSegments(localCopy, clips, p, tmp, ctx, () =>
+        ctx.progress(0.45, 'Menyinkronkan rekaman dengan Whisper')
+      )
+      ctx.progress(0.85, 'Memotong rekaman per adegan')
+      const label = basename(sourceFile)
+      for (const s of segments) {
+        store(p, s, label, takeId, readFileSync(s.file), { provider: 'local', model: 'import' })
+      }
+      touchProject(projectId)
+    } finally {
+      rmSync(tmp, { recursive: true, force: true })
+    }
+  })
 }
 
 /** Voices the scenes that need it ("missing") or every scene ("all") as one continuous take. */

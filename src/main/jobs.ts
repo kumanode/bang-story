@@ -137,3 +137,12 @@ export async function cancelProjectJobs(projectId: string, kind?: string): Promi
 export function isActive(id: string): boolean {
   return controllers.has(id)
 }
+
+export function activeJobCount(): number {
+  return controllers.size
+}
+
+/** Aborts every running or queued job (including FFmpeg/Whisper child processes) on app shutdown. */
+export function cancelAllJobs(): void {
+  for (const ctrl of controllers.values()) ctrl.abort()
+}
